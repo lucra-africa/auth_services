@@ -1,6 +1,6 @@
 """Invitation API routes."""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.dependencies import get_current_verified_user
@@ -12,7 +12,25 @@ from src.services.log_service import get_client_ip
 router = APIRouter(prefix="/invitations", tags=["invitations"])
 
 
-@router.post("/send", status_code=201)
+@router.post("/create", status_code=201)
+async def create_invitation(
+    body: InviteRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_verified_user),
+):
+    return await auth_service.send_invitation(
+        db,
+        inviter=user,
+        email=body.email,
+        role=body.role,
+        agency_id=body.agency_id,
+        ip_address=get_client_ip(request),
+        user_agent_str=request.headers.get("user-agent"),
+    )
+
+
+@router.post("/send", status_code=201)  # Kept for backward compatibility
 async def send_invitation(
     body: InviteRequest,
     request: Request,
@@ -27,6 +45,19 @@ async def send_invitation(
         agency_id=body.agency_id,
         ip_address=get_client_ip(request),
         user_agent_str=request.headers.get("user-agent"),
+    )
+
+
+@router.get("/list")
+async def list_invitations(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: str = Query(None, regex="^(pending|used|expired)$"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_verified_user),
+):
+    return await auth_service.list_invitations(
+        db, user=user, page=page, page_size=page_size, status=status
     )
 
 
