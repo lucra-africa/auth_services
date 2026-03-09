@@ -137,23 +137,12 @@ async def signup(
         email=email,
         password_hash=hash_password(password),
         role=UserRole(role),
-        is_email_verified=False,
+        is_email_verified=True,
         is_active=True,
         profile_completed=False,
     )
     db.add(user)
     await db.flush()
-
-    raw_token = generate_token()
-    evt = EmailVerificationToken(
-        user_id=user.id,
-        token_hash=hash_token(raw_token),
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-    )
-    db.add(evt)
-    await db.flush()
-
-    await email_service.send_verification_email(email, raw_token)
 
     await log_action(
         db, AuthAction.SIGNUP,
@@ -162,7 +151,7 @@ async def signup(
         metadata={"role": role},
     )
 
-    return {"message": "Account created. Please check your email to verify your account.", "email": email}
+    return {"message": "Account created successfully. You can now log in.", "email": email}
 
 
 # ── Email Verification ──────────────────────────────────────────────
@@ -294,9 +283,6 @@ async def login(
 
         await db.flush()
         raise AuthenticationError("Invalid email or password")
-
-    if not user.is_email_verified:
-        raise AuthorizationError("Please verify your email address before logging in.")
 
     # Success
     user.failed_login_count = 0
@@ -474,6 +460,80 @@ async def send_invitation(
     return {
         "message": f"Invitation sent to {email}",
         "expires_at": invitation.expires_at.isoformat(),
+    }
+
+
+async def list_invitations(
+    db: AsyncSession,
+    user: User,
+    page: int = 1,
+    page_size: int = 20,
+    status: str | None = None,
+) -> dict:
+    """List invitations created by the user."""
+    from sqlalchemy import func, or_
+
+    # Build base query
+    query = select(InvitationToken).where(InvitationToken.invited_by == user.id)
+
+    # Filter by status
+    now = datetime.now(timezone.utc)
+    if status == "pending":
+        query = query.where(
+            InvitationToken.used_at.is_(None),
+            InvitationToken.expires_at > now,
+        )
+    elif status == "used":
+        query = query.where(InvitationToken.used_at.isnot(None))
+    elif status == "expired":
+        query = query.where(
+            InvitationToken.used_at.is_(None),
+            InvitationToken.expires_at <= now,
+        )
+
+    # Get total count
+    count_query = select(func.count()).select_from(query.subquery())
+    count_result = await db.execute(count_query)
+    total = count_result.scalar_one()
+
+    # Apply pagination and ordering
+    query = query.order_by(InvitationToken.created_at.desc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
+
+    result = await db.execute(query)
+    invitations = result.scalars().all()
+
+    # Format response
+    items = []
+    for inv in invitations:
+        # Get agency name if applicable
+        agency_name = None
+        if inv.agency_id:
+            agency_result = await db.execute(
+                select(Agency.name).where(Agency.id == inv.agency_id)
+            )
+            agency_name = agency_result.scalar_one_or_none()
+
+        # Determine status
+        inv_status = "used" if inv.used_at else ("expired" if inv.expires_at <= now else "pending")
+
+        items.append({
+            "id": str(inv.id),
+            "email": inv.email,
+            "role": inv.role.value,
+            "agency_name": agency_name,
+            "status": inv_status,
+            "expires_at": inv.expires_at.isoformat(),
+            "created_at": inv.created_at.isoformat(),
+            "used_at": inv.used_at.isoformat() if inv.used_at else None,
+        })
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": (total + page_size - 1) // page_size,
     }
 
 
