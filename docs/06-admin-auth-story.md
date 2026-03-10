@@ -74,6 +74,21 @@ Before agency managers can onboard, their agencies must exist.
 4. `POST /auth/invite` → 201
 5. Government official receives invitation email
 
+### 2b. Universal Invitation (Any Role)
+
+Admin can invite **any** role in the system — not just Government.
+
+**Supported invitation targets:** `importer`, `agent`, `agency_manager`, `inspector`, `government`
+
+**Flow:**
+1. Go to User Management → "Invite User"
+2. Enter email, select any role from the list above
+3. If inviting an `agent`, also select the target agency (admin can assign to any agency)
+4. `POST /auth/invite` → 201
+5. User receives invitation email with a registration link
+
+> Agency managers and government officials can still invite their own downstream roles as before. Admin simply has no restrictions.
+
 ### 3. Monitor System via Audit Logs
 
 **Flow:**
@@ -104,16 +119,91 @@ Before agency managers can onboard, their agencies must exist.
 
 ---
 
+## Shadow Mode
+
+Admin can "shadow" any non-admin user — acting as that user to debug issues, verify permissions, or assist with support requests. Shadow mode provides full access to everything the target user can see and do.
+
+### How It Works
+
+1. Admin selects a user to shadow
+2. `POST /admin/shadow/{user_id}` → returns a **shadow token**
+3. The shadow token is a standard JWT access token with two extra claims:
+   - `shadow_admin_id` — the admin's user ID
+   - `shadow_admin_email` — the admin's email
+4. The frontend uses this token instead of the admin's own token
+5. All API requests work as if the admin is the target user
+
+### Starting a Shadow Session
+
+```
+POST /admin/shadow/{user_id}
+Authorization: Bearer <admin_access_token>
+```
+
+**Response:**
+```json
+{
+  "shadow_token": "eyJ...",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "target_user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "role": "agent"
+  },
+  "message": "Shadow session started for user@example.com"
+}
+```
+
+### Ending a Shadow Session
+
+```
+POST /admin/shadow/end
+Authorization: Bearer <admin_access_token>
+Content-Type: application/json
+
+{"shadowed_user_id": "uuid"}
+```
+
+### Shadow Constraints
+
+| Constraint | Details |
+|-----------|---------|
+| Cannot shadow other admins | Prevented — returns 403 |
+| Cannot shadow deactivated users | Prevented — returns 400 |
+| Token expiry | Same as regular access tokens (15 minutes) |
+| No refresh token | Shadow tokens are not refreshable — admin must start a new session |
+
+### Auditing
+
+Every shadow session generates two audit log entries:
+- `SHADOW_START` — logged when admin starts the session (includes target user details)
+- `SHADOW_END` — logged when admin explicitly ends the session
+
+All HTTP requests made with a shadow token are tagged in server logs with `[SHADOW by admin@email]`.
+
+### Frontend Integration
+
+The frontend should:
+1. Store the shadow token separately from the admin's own token
+2. Display a prominent banner: "You are shadowing user@example.com"
+3. When ending shadow mode, call `POST /admin/shadow/end` then restore the admin's original token
+
+---
+
 ## Admin Restrictions
 
 Even admins have boundaries:
 
 | Action | Allowed? | Reason |
 |--------|----------|--------|
-| Create another admin via web | ❌ | CLI/seed only — prevents web-based admin escalation |
-| Deactivate another admin | ❌ | Prevents admin power struggles — one rogue admin can't lock out all others |
-| Self-deactivate | ❌ | Would lock themselves out |
-| Invite admin via invitation system | ❌ | Admin creation is a server-side operation |
+| Create another admin via web | No | CLI/seed only — prevents web-based admin escalation |
+| Deactivate another admin | No | Prevents admin power struggles — one rogue admin can't lock out all others |
+| Self-deactivate | No | Would lock themselves out |
+| Invite admin via invitation system | No | Admin creation is a server-side operation |
+| Invite any other role | Yes | Admin can invite importer, agent, agency_manager, inspector, government |
+| Shadow any non-admin user | Yes | Full access shadow mode with audit trail |
+| Shadow another admin | No | Admin-to-admin shadowing is blocked |
 | Access importer's payment data | Per permissions | Auth service manages identity, not data access |
 
 ---
@@ -151,11 +241,12 @@ The env-var auto-seed is the "genesis event" — it only runs once, only if no a
 
 | Resource | View | Create | Edit | Delete |
 |----------|------|--------|------|--------|
-| All Users | ✅ | ❌ (invite only) | ❌ | ❌ |
-| User Activation | — | — | ✅ | ❌ |
-| Agencies | ✅ | ✅ | ✅ | ✅ (soft) |
-| Agency Members | ✅ | ❌ | ❌ | ❌ |
-| Audit Logs | ✅ | ❌ | ❌ | ❌ |
-| Invitations (govt) | ✅ | ✅ | ❌ | ❌ |
-| Own Profile | ✅ | ❌ | ✅ | ❌ |
+| All Users | Yes | No (invite only) | No | No |
+| User Activation | — | — | Yes | No |
+| Agencies | Yes | Yes | Yes | Yes (soft) |
+| Agency Members | Yes | No | No | No |
+| Audit Logs | Yes | No | No | No |
+| Invitations (all roles) | Yes | Yes | No | No |
+| Own Profile | Yes | No | Yes | No |
+| Shadow Mode | — | Yes (start) | — | Yes (end) |
 | System Settings | — | — | — | — |
