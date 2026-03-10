@@ -5,10 +5,11 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
 
 from src.config import settings
-from src.core import ConflictError, NotFoundError
-from src.core.security import hash_password, validate_password_strength
+from src.core import AuthorizationError, ConflictError, NotFoundError, ValidationError
+from src.core.security import create_shadow_token, hash_password, validate_password_strength
 from src.models.enums import AuthAction, UserRole
 from src.models.log import AuthLog
 from src.models.token import RefreshToken
@@ -67,6 +68,38 @@ async def list_users(
     }
 
 
+async def get_user(db: AsyncSession, user_id: str) -> dict:
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise NotFoundError("User not found")
+
+    # Load profile if exists
+    profile_result = await db.execute(
+        select(UserProfile).where(UserProfile.user_id == user.id)
+    )
+    profile = profile_result.scalar_one_or_none()
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "role": user.role.value,
+        "is_active": user.is_active,
+        "is_email_verified": user.is_email_verified,
+        "profile_completed": user.profile_completed,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+        "profile": {
+            "first_name": profile.first_name,
+            "last_name": profile.last_name,
+            "phone": profile.phone,
+            "company_name": profile.company_name,
+        } if profile else None,
+    }
+
+
 async def deactivate_user(
     db: AsyncSession,
     admin: User,
@@ -80,7 +113,6 @@ async def deactivate_user(
         raise NotFoundError("User not found")
 
     if str(target.id) == str(admin.id):
-        from src.core import ValidationError
         raise ValidationError("Cannot deactivate your own account")
 
     target.is_active = False
@@ -215,3 +247,109 @@ async def seed_admin(db: AsyncSession) -> bool:
 
     logger.info("Admin user seeded: %s", admin.email)
     return True
+
+
+async def shadow_user(
+    db: AsyncSession,
+    admin: User,
+    user_id: str,
+    ip_address: str | None = None,
+    user_agent_str: str | None = None,
+) -> dict:
+    """Start a shadow session — admin acts as the target user."""
+    result = await db.execute(
+        select(User)
+        .where(User.id == user_id)
+        .options(joinedload(User.profile), selectinload(User.agency_links))
+    )
+    target = result.unique().scalar_one_or_none()
+    if not target:
+        raise NotFoundError("User not found")
+
+    if not target.is_active:
+        raise ValidationError("Cannot shadow a deactivated user")
+
+    if target.role == UserRole.ADMIN:
+        raise AuthorizationError("Cannot shadow another admin")
+
+    shadow_token = create_shadow_token(
+        target_user_id=str(target.id),
+        target_role=target.role.value,
+        target_email=target.email,
+        admin_id=str(admin.id),
+        admin_email=admin.email,
+    )
+
+    # Build profile dict if the user has completed their profile
+    profile_data = None
+    if target.profile:
+        profile_data = {
+            "first_name": target.profile.first_name,
+            "last_name": target.profile.last_name,
+            "phone": target.profile.phone,
+            "company_name": target.profile.company_name,
+            "avatar_url": target.profile.avatar_url,
+            "metadata": target.profile.metadata_ or {},
+        }
+
+    # Build agency dict from the first agency link (if any)
+    agency_data = None
+    if target.agency_links:
+        link = target.agency_links[0]
+        agency_data = {
+            "id": str(link.agency_id),
+            "name": None,
+            "role_in_agency": link.role_in_agency.value if link.role_in_agency else "member",
+        }
+
+    # Log AFTER all reads so a log failure can't poison the session
+    await log_action(
+        db, AuthAction.SHADOW_START,
+        user_id=str(admin.id), email=admin.email,
+        ip_address=ip_address, user_agent=user_agent_str,
+        metadata={
+            "target_user_id": str(target.id),
+            "target_email": target.email,
+            "target_role": target.role.value,
+        },
+    )
+
+    return {
+        "shadow_token": shadow_token,
+        "token_type": "Bearer",
+        "expires_in": settings.jwt_access_token_expire_minutes * 60,
+        "target_user": {
+            "id": str(target.id),
+            "email": target.email,
+            "role": target.role.value,
+            "is_email_verified": target.is_email_verified,
+            "profile_completed": target.profile_completed,
+            "profile": profile_data,
+            "agency": agency_data,
+        },
+        "message": f"Shadow session started for {target.email}",
+    }
+
+
+async def end_shadow(
+    db: AsyncSession,
+    admin: User,
+    shadowed_user_id: str,
+    ip_address: str | None = None,
+    user_agent_str: str | None = None,
+) -> dict:
+    """Log the end of a shadow session."""
+    result = await db.execute(select(User).where(User.id == shadowed_user_id))
+    target = result.scalar_one_or_none()
+
+    await log_action(
+        db, AuthAction.SHADOW_END,
+        user_id=str(admin.id), email=admin.email,
+        ip_address=ip_address, user_agent=user_agent_str,
+        metadata={
+            "target_user_id": shadowed_user_id,
+            "target_email": target.email if target else "unknown",
+        },
+    )
+
+    return {"message": "Shadow session ended"}
