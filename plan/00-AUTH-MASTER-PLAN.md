@@ -22,9 +22,11 @@ For detailed tradeoff analysis of every decision, see [TRADEOFF-ANALYSIS.md](./T
 | **Importer** | Self-signup (`/signup`) | — | Verify email → Complete profile (name, phone, company) |
 | **Agency Manager** | Self-signup (`/signup`) | — | Verify email → Complete profile → Associate with agency |
 | **Custom Agent** | Invitation link (`/signup/invite?token=...`) | Agency Manager | Set password + profile → Auto-verified, auto-linked to agency |
-| **Inspector** | Invitation link (`/signup/invite?token=...`) | Government/RRA | Set password + profile → Auto-verified |
+| **Inspector** | Invitation link (`/signup/invite?token=...`) | Government/RRA / Admin | Set password + profile → Auto-verified |
 | **Government/RRA** | Invitation link (`/signup/invite?token=...`) | System Admin | Set password + profile → Auto-verified |
 | **System Admin** | CLI / env-var seed | System / Another Admin | Pre-created, no web signup |
+
+> **Note:** System Admin can invite **any** role (importer, agent, agency_manager, inspector, government) via the invitation system.
 
 ---
 
@@ -154,6 +156,8 @@ For detailed tradeoff analysis of every decision, see [TRADEOFF-ANALYSIS.md](./T
 | GET | `/auth/users` | List users (paginated, filterable) | Yes (Admin) |
 | PATCH | `/auth/users/{id}/deactivate` | Deactivate user | Yes (Admin) |
 | PATCH | `/auth/users/{id}/activate` | Reactivate user | Yes (Admin) |
+| POST | `/admin/shadow/{user_id}` | Start shadow session as target user | Yes (Admin) |
+| POST | `/admin/shadow/end` | End shadow session | Yes (Admin) |
 
 ### Audit Logs
 | Method | Path | Description | Auth Required |
