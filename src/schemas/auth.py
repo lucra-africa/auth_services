@@ -47,7 +47,7 @@ class RefreshRequest(BaseModel):
 
 class InviteRequest(BaseModel):
     email: str
-    role: Literal["agent", "inspector", "government"]
+    role: Literal["importer", "agent", "agency_manager", "inspector", "government"]
     agency_id: str | None = None
 
     @field_validator("email")
