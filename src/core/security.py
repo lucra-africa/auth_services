@@ -69,6 +69,29 @@ def create_refresh_token_jwt(user_id: str) -> str:
     return jwt.encode(payload, settings.jwt_secret_key, algorithm="HS256")
 
 
+def create_shadow_token(
+    target_user_id: str,
+    target_role: str,
+    target_email: str,
+    admin_id: str,
+    admin_email: str,
+) -> str:
+    """Create an access token for shadow mode with admin identity embedded."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": target_user_id,
+        "role": target_role,
+        "email": target_email,
+        "type": "access",
+        "shadow_admin_id": admin_id,
+        "shadow_admin_email": admin_email,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.jwt_access_token_expire_minutes),
+        "jti": str(uuid.uuid4()),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm="HS256")
+
+
 def decode_token(token: str) -> dict:
     try:
         return jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
