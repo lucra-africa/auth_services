@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 INVITATION_PERMISSIONS: dict[str, list[str]] = {
     "agency_manager": ["agent"],
     "government": ["inspector"],
-    "admin": ["government"],
+    "admin": ["importer", "agent", "agency_manager", "inspector", "government"],
 }
 
 
@@ -418,15 +418,16 @@ async def send_invitation(
         if not agency.is_active:
             raise ValidationError("Agency has been deactivated")
 
-        # Verify inviter belongs to this agency
-        result = await db.execute(
-            select(UserAgency).where(
-                UserAgency.user_id == inviter.id,
-                UserAgency.agency_id == agency.id,
+        # Admins can invite agents to any agency; others must belong to the agency
+        if inviter.role != UserRole.ADMIN:
+            result = await db.execute(
+                select(UserAgency).where(
+                    UserAgency.user_id == inviter.id,
+                    UserAgency.agency_id == agency.id,
+                )
             )
-        )
-        if not result.scalar_one_or_none():
-            raise AuthorizationError("You can only invite agents to your own agency")
+            if not result.scalar_one_or_none():
+                raise AuthorizationError("You can only invite agents to your own agency")
 
         resolved_agency_id = agency.id
         agency_name = agency.name
