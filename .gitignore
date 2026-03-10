@@ -2,7 +2,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.env
 .venv/
 venv/
 env/
@@ -14,3 +13,4 @@ build/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+scripts/start-auth.ps1
