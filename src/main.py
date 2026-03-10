@@ -1,6 +1,7 @@
 """Poruta Auth Service — FastAPI application."""
 
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -52,7 +53,55 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS
+
+# ── Request Logging Middleware ──────────────────────────────────────
+# NOTE: Defined BEFORE CORSMiddleware so that Starlette's middleware
+# stack puts CORS as the outermost layer.  This guarantees every
+# response — including error 500s — carries CORS headers.
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all HTTP requests with timing information."""
+    start_time = time.time()
+    
+    client_host = request.client.host if request.client else "unknown"
+    path = request.url.path
+    method = request.method
+    qs = f"?{request.query_params}" if request.query_params else ""
+
+    # Detect shadow mode from JWT
+    shadow_tag = ""
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            from src.core.security import decode_token
+            payload = decode_token(auth_header[7:])
+            admin_email = payload.get("shadow_admin_email")
+            if admin_email:
+                shadow_tag = f" [SHADOW by {admin_email}]"
+        except Exception:
+            pass
+
+    logger.info("--> %s %s%s (from %s)%s", method, path, qs, client_host, shadow_tag)
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        process_time = (time.time() - start_time) * 1000
+        logger.exception("Unhandled error during %s %s [%.2fms]", method, path, process_time)
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+
+    process_time = (time.time() - start_time) * 1000
+    tag = "OK" if response.status_code < 400 else "FAIL"
+    logger.info(
+        "<-- %s %s %s [%s] %.2fms%s",
+        tag, method, path, response.status_code, process_time, shadow_tag,
+    )
+
+    return response
+
+
+# CORS — added AFTER @app.middleware so it wraps the logging middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -60,6 +109,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
 
 # Routes
 app.include_router(api_router)
@@ -101,6 +151,12 @@ async def account_locked_error_handler(request: Request, exc: AccountLockedError
         status_code=423,
         content={"error": exc.message, "locked_until": exc.locked_until},
     )
+
+
+@app.exception_handler(Exception)
+async def generic_error_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 # ── Health check ─────────────────────────────────────────────────────
