@@ -4,55 +4,55 @@ import argparse
 import asyncio
 import getpass
 import sys
+from datetime import datetime, timezone
 
 from src.config import settings
 from src.core.security import hash_password, validate_password_strength
-from src.database import async_session_factory, init_database, close_database
+from src.db.mongo import init_database, close_database, get_db
 from src.models.enums import UserRole
-from src.models.user import User, UserProfile
-
-from sqlalchemy import select
 
 
 async def create_admin(email: str, password: str) -> None:
     await init_database()
+    db = get_db()
 
-    async with async_session_factory() as db:
-        result = await db.execute(select(User).where(User.email == email))
-        if result.scalar_one_or_none():
-            print(f"Error: User with email '{email}' already exists.")
-            await close_database()
-            sys.exit(1)
+    existing = await db.users.find_one({"email": email.lower().strip()})
+    if existing:
+        print(f"Error: User with email '{email}' already exists.")
+        await close_database()
+        sys.exit(1)
 
-        violations = validate_password_strength(password)
-        if violations:
-            print("Password does not meet requirements:")
-            for v in violations:
-                print(f"  - {v}")
-            await close_database()
-            sys.exit(1)
+    violations = validate_password_strength(password)
+    if violations:
+        print("Password does not meet requirements:")
+        for v in violations:
+            print(f"  - {v}")
+        await close_database()
+        sys.exit(1)
 
-        admin = User(
-            email=email.lower().strip(),
-            password_hash=hash_password(password),
-            role=UserRole.ADMIN,
-            is_email_verified=True,
-            is_active=True,
-            profile_completed=True,
-        )
-        db.add(admin)
-        await db.flush()
-
-        profile = UserProfile(
-            user_id=admin.id,
-            first_name="System",
-            last_name="Administrator",
-            metadata_={},
-        )
-        db.add(profile)
-        await db.commit()
-
-        print(f"Admin user created: {email}")
+    now = datetime.now(timezone.utc)
+    user_doc = {
+        "email": email.lower().strip(),
+        "password_hash": hash_password(password),
+        "role": UserRole.ADMIN.value,
+        "is_email_verified": True,
+        "is_active": True,
+        "profile_completed": True,
+        "profile": {
+            "first_name": "System",
+            "last_name": "Administrator",
+            "phone": None,
+            "company_name": None,
+            "avatar_url": None,
+            "metadata": {},
+        },
+        "failed_login_attempts": 0,
+        "locked_until": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.users.insert_one(user_doc)
+    print(f"Admin user created: {email}")
 
     await close_database()
 
