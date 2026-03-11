@@ -79,6 +79,8 @@ async def invited_signup(
         first_name=body.first_name,
         last_name=body.last_name,
         phone=body.phone,
+        phone_number=body.phone_number,
+        address=body.address.model_dump() if body.address else None,
         ip_address=get_client_ip(request),
         user_agent_str=request.headers.get("user-agent"),
     )
