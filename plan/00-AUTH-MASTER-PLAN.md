@@ -1,32 +1,35 @@
 # Poruta Authentication — Master Plan
 
 > **Service**: `auth_services/` (standalone FastAPI microservice)  
-> **Port**: 5000  
-> **Database**: PostgreSQL (`poruta_auth` — separate from main `poruta` DB)  
-> **Status**: Planning  
+> **Port**: 8050  
+> **Database**: MongoDB (`poruta_auth`)  
+> **JWT**: RS256 (asymmetric RSA keys)  
+> **Status**: Integrated with poruta-backend  
 
 ---
 
 ## Overview
 
-Build a production authentication service for the Poruta customs clearance platform. Six user roles, each with distinct registration flows — from self-signup importers to invitation-only government officials. The system prioritizes auditability (every auth action is logged), security (Argon2id passwords, JWT tokens, invitation trust chains), and minimalism (8 Python packages total, zero third-party services beyond SMTP).
+Production authentication service for the Poruta customs clearance platform. Seven user roles, each with distinct registration flows — from self-signup importers to invitation-only government officials. The system prioritizes auditability (every auth action is logged), security (Argon2id passwords, RS256 JWT tokens, invitation trust chains), and minimalism.
 
-For detailed tradeoff analysis of every decision, see [TRADEOFF-ANALYSIS.md](./TRADEOFF-ANALYSIS.md).
+For detailed tradeoff analysis of every decision, see [TRADEOFF-ANALYSIS.md](./TRADEOFF-ANALYSIS.md).  
+For backend integration details, see [docs/BACKEND_INTEGRATION_GUIDE.md](../docs/BACKEND_INTEGRATION_GUIDE.md).
 
 ---
 
 ## Roles & Registration Flows
 
-| Role | How They Register | Invited By | Post-Registration |
-|------|-------------------|------------|-------------------|
-| **Importer** | Self-signup (`/signup`) | — | Verify email → Complete profile (name, phone, company) |
-| **Agency Manager** | Self-signup (`/signup`) | — | Verify email → Complete profile → Associate with agency |
-| **Custom Agent** | Invitation link (`/signup/invite?token=...`) | Agency Manager | Set password + profile → Auto-verified, auto-linked to agency |
-| **Inspector** | Invitation link (`/signup/invite?token=...`) | Government/RRA / Admin | Set password + profile → Auto-verified |
-| **Government/RRA** | Invitation link (`/signup/invite?token=...`) | System Admin | Set password + profile → Auto-verified |
-| **System Admin** | CLI / env-var seed | System / Another Admin | Pre-created, no web signup |
+| Role | Backend RoleEnum | How They Register | Invited By |
+|------|------------------|-------------------|------------|
+| **Importer** | `IMPORTER` | Self-signup (`/signup`) | — |
+| **Agency Manager** | `AGENCY_ADMIN` | Self-signup (`/signup`) | — |
+| **Custom Agent** | `AGENT` | Invitation link | Agency Manager / Admin |
+| **Inspector** | `STAKEHOLDER_WAREHOUSE` | Invitation link | Admin |
+| **Government (RRA)** | `STAKEHOLDER_RRA` | Invitation link | Admin / other RRA |
+| **Government (RSB)** | `STAKEHOLDER_RSB` | Invitation link | Admin / other RSB |
+| **System Admin** | `SYSTEM_ADMIN` | CLI / env-var seed | System |
 
-> **Note:** System Admin can invite **any** role (importer, agent, agency_manager, inspector, government) via the invitation system.
+> **Note:** System Admin can invite **any** role via the invitation system. RRA officials can invite other RRA officials. RSB officials can invite other RSB officials.
 
 ---
 
