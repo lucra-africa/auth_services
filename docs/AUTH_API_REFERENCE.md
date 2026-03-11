@@ -1,6 +1,6 @@
 # Poruta Auth Service — API Reference
 
-> **Base URL**: `http://localhost:5000` (dev) / `https://auth.poruta.com` (prod)  
+> **Base URL**: `http://localhost:8050` (dev) / `https://auth.poruta.com` (prod)  
 > **Content-Type**: `application/json` (all requests and responses)  
 > **Authentication**: Bearer token in `Authorization` header (where required)
 
@@ -35,7 +35,14 @@ Self-registration for importers and agency managers.
 {
   "email": "user@example.com",
   "password": "Str0ng!P@ssw0rd",
-  "role": "importer"
+  "role": "importer",
+  "phone_number": "+250788123456",
+  "address": {
+    "street": "KN 5 Rd",
+    "city": "Kigali",
+    "province": "Kigali",
+    "country": "Rwanda"
+  }
 }
 ```
 
@@ -44,6 +51,8 @@ Self-registration for importers and agency managers.
 | `email` | string | Required, valid email, unique |
 | `password` | string | Required, 12+ chars, upper+lower+digit+special |
 | `role` | string | Required, one of: `importer`, `agency_manager` |
+| `phone_number` | string | Optional |
+| `address` | object | Optional, contains street/city/province/country |
 
 **Response (201):**
 ```json
@@ -206,7 +215,7 @@ Clears refresh token cookie (`Max-Age=0`) and revokes the refresh token in the d
 
 ### POST /auth/invite
 
-**Auth:** Bearer token (agency_manager, government, or admin)
+**Auth:** Bearer token (agency_manager, government_rra, government_rsb, or admin)
 
 **Request:**
 ```json
@@ -228,8 +237,9 @@ Clears refresh token cookie (`Max-Age=0`) and revokes the refresh token in the d
 | Inviter | Can Invite |
 |---------|-----------|
 | agency_manager | agent |
-| government | inspector |
-| admin | government |
+| government_rra | government_rra |
+| government_rsb | government_rsb |
+| admin | importer, agent, agency_manager, inspector, government_rra, government_rsb |
 
 **Response (201):**
 ```json
@@ -288,7 +298,14 @@ Clears refresh token cookie (`Max-Age=0`) and revokes the refresh token in the d
   "password": "Str0ng!P@ssw0rd",
   "first_name": "Marie-Claire",
   "last_name": "Uwimana",
-  "phone": "+250788654321"
+  "phone": "+250788654321",
+  "phone_number": "+250788654321",
+  "address": {
+    "street": "KG 15 Ave",
+    "city": "Kigali",
+    "province": "Kigali",
+    "country": "Rwanda"
+  }
 }
 ```
 
@@ -314,18 +331,27 @@ Clears refresh token cookie (`Max-Age=0`) and revokes the refresh token in the d
   "first_name": "Jean-Pierre",
   "last_name": "Habimana",
   "phone": "+250788123456",
+  "phone_number": "+250788123456",
   "company_name": "Kigali Electronics Ltd",
-  "agency_id": null
+  "agency_id": null,
+  "address": {
+    "street": "KN 5 Rd",
+    "city": "Kigali",
+    "province": "Kigali",
+    "country": "Rwanda"
+  }
 }
 ```
 
 | Field | Required For |
-|-------|-------------|
+|-------|--------------|
 | `first_name` | All |
 | `last_name` | All |
 | `phone` | All |
+| `phone_number` | Optional (top-level contact) |
 | `company_name` | Importers only |
 | `agency_id` | Agency Managers only |
+| `address` | Optional (street, city, province, country) |
 
 **Response (200):**
 ```json
@@ -663,7 +689,7 @@ Revokes all user's active sessions.
 
 | Token | Algorithm | Lifetime | Storage | Transport |
 |-------|-----------|----------|---------|-----------|
-| Access | HS256 (PyJWT) | 15 min | Client memory | `Authorization: Bearer` header |
+| Access | RS256 (PyJWT + cryptography) | 15 min | Client memory | `Authorization: Bearer` header |
 | Refresh | Random (secrets.token_urlsafe) | 7 days | DB (SHA-256 hash) | httpOnly cookie |
 | Email Verification | Random (secrets.token_urlsafe) | 24 hours | DB (SHA-256 hash) | Email URL |
 | Password Reset | Random (secrets.token_urlsafe) | 1 hour | DB (SHA-256 hash) | Email URL |
@@ -936,3 +962,64 @@ Push a notification from an external service (e.g., poruta-backend).
 ```
 
 **Response (201):** Notification object.
+
+---
+
+## Internal Service API
+
+These endpoints are for service-to-service communication (poruta-backend → auth-service). Secured with `X-Service-Key` header.
+
+### GET /internal/users/{user_id}
+
+**Auth:** `X-Service-Key` header
+
+**Response (200):**
+```json
+{
+  "user_id": "69b03e804b1c58e151bc05fa",
+  "email": "user@example.com",
+  "role": "government_rra",
+  "backend_role": "STAKEHOLDER_RRA",
+  "first_name": "Jean",
+  "last_name": "Habimana",
+  "phone_number": "+250788123456",
+  "address": { "street": "KN 5 Rd", "city": "Kigali", "province": "Kigali", "country": "Rwanda" },
+  "agency_id": null,
+  "is_active": true,
+  "is_email_verified": true
+}
+```
+
+### POST /internal/users/batch
+
+**Auth:** `X-Service-Key` header
+
+**Request:**
+```json
+{
+  "user_ids": ["id1", "id2", "id3"]
+}
+```
+
+**Response (200):** Array of user objects (same structure as single lookup). Max 100 IDs per request.
+
+### GET /internal/users/by-role/{role}
+
+**Auth:** `X-Service-Key` header
+
+**Query:** `?page=1&page_size=50`
+
+**Response (200):**
+```json
+{
+  "items": [ /* array of user objects */ ],
+  "total": 42,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+| Error | Code |
+|-------|------|
+| Missing/invalid service key | 401 |
+| User not found | 404 |
