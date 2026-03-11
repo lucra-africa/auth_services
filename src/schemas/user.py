@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel
 
 
@@ -11,27 +9,21 @@ class ProfileResponse(BaseModel):
     avatar_url: str | None = None
     metadata: dict | None = None
 
-    model_config = {"from_attributes": True}
-
 
 class AgencyBrief(BaseModel):
-    id: UUID
+    id: str
     name: str
     role_in_agency: str
 
-    model_config = {"from_attributes": True}
-
 
 class UserResponse(BaseModel):
-    id: UUID
+    id: str
     email: str
     role: str
     is_email_verified: bool
     profile_completed: bool
     profile: ProfileResponse | None = None
     agency: AgencyBrief | None = None
-
-    model_config = {"from_attributes": True}
 
 
 class TokenResponse(BaseModel):
