@@ -8,18 +8,18 @@
 
 ## Objective
 
-Define the exact contract between `auth_services` (port 5000) and `poruta-front-end` (port 3000). This document tells the frontend team: what endpoints to call, what to send, what to expect back, how to store tokens, and what routes to build. **No frontend code is written in this step** — only the specification.
+Define the exact contract between `auth_services` (port 8050) and `poruta-front-end` (port 3000). This document tells the frontend team: what endpoints to call, what to send, what to expect back, how to store tokens, and what routes to build. **No frontend code is written in this step** — only the specification.
 
 ---
 
 ## API Base URL
 
 ```
-Development: http://localhost:5000
+Development: http://localhost:8050
 Production:  https://auth.poruta.com (or configure via NEXT_PUBLIC_AUTH_URL)
 ```
 
-Frontend env variable: `NEXT_PUBLIC_AUTH_URL=http://localhost:5000`
+Frontend env variable: `NEXT_PUBLIC_AUTH_URL=http://localhost:8050`
 
 ---
 
