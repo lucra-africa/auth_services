@@ -4,7 +4,7 @@
 
 **Location:** `scripts/db-interact.ps1`
 
-This PowerShell script provides one-line commands to interact with the PostgreSQL database.
+This PowerShell script provides one-line commands to interact with the MongoDB database.
 
 ### Usage:
 1. Open the file in VS Code or PowerShell ISE
@@ -99,41 +99,38 @@ Full details in: `docs/EMAIL_VERIFICATION_STATUS.md`
 ```powershell
 cd "c:\Users\Admin\OneDrive\Desktop\Poruta\auth_services"
 $env:PYTHONPATH = (Get-Location).Path
-python -m uvicorn src.main:app --host 0.0.0.0 --port 5000 --reload
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8050 --reload
 ```
 
-Health check: http://localhost:5000/health
-Swagger API docs: http://localhost:5000/docs
+Health check: http://localhost:8050/health
+Swagger API docs: http://localhost:8050/docs
 
 ---
 
-## 📊 Database Quick Queries
+## 📊 Database Quick Queries (MongoDB)
 
 ```powershell
-# Setup
-$env:PGPASSWORD = "poruta_dev_password"
-$PSQL = "C:\Program Files\PostgreSQL\18\bin\psql.exe"
+# Using mongosh (MongoDB Shell)
+mongosh "mongodb://localhost:27017/poruta_auth"
 
 # View all admins
-& $PSQL -U poruta -h localhost -d poruta_auth -c "SELECT id, email, is_active, created_at FROM users WHERE role = 'ADMIN' ORDER BY created_at;"
+db.users.find({role: "admin"}, {email: 1, is_active: 1, created_at: 1})
 
 # Count users by role
-& $PSQL -U poruta -h localhost -d poruta_auth -c "SELECT role, COUNT(*) FROM users GROUP BY role;"
+db.users.aggregate([{$group: {_id: "$role", count: {$sum: 1}}}])
 
 # Recent auth activity
-& $PSQL -U poruta -h localhost -d poruta_auth -c "SELECT action, email, created_at FROM auth_logs ORDER BY created_at DESC LIMIT 10;"
+db.auth_logs.find().sort({created_at: -1}).limit(10)
 ```
 
 ---
 
-## 🔐 Database Credentials
+## 🔐 Database Credentials (MongoDB)
 
 - **Host:** localhost
-- **Port:** 5432
+- **Port:** 27017
 - **Database:** poruta_auth
-- **User:** poruta
-- **Password:** poruta_dev_password
-- **Admin (superuser):** postgres / Integrity
+- **Connection:** `mongodb://localhost:27017/poruta_auth`
 
 ---
 
@@ -178,7 +175,7 @@ $PSQL = "C:\Program Files\PostgreSQL\18\bin\psql.exe"
 ### Can't connect to database
 ```powershell
 # Test connection
-python -c "import asyncio, asyncpg; asyncio.run(asyncpg.connect('postgresql://poruta:poruta_dev_password@localhost:5432/poruta_auth')); print('Connected OK')"
+python -c "import asyncio; from motor.motor_asyncio import AsyncIOMotorClient; c = AsyncIOMotorClient('mongodb://localhost:27017'); asyncio.run(c.server_info()); print('Connected OK')"
 ```
 
 ### User can't login
@@ -190,7 +187,7 @@ python -c "import asyncio, asyncpg; asyncio.run(asyncpg.connect('postgresql://po
 
 ## 📝 Notes
 
-- Docker has been removed - using local PostgreSQL only
+- Using MongoDB (Motor async driver) for all data storage
 - Email verification is disabled for faster development
 - Multiple admins are supported out of the box
 - All scripts are Windows PowerShell compatible
