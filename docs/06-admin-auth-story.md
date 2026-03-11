@@ -70,15 +70,15 @@ Before agency managers can onboard, their agencies must exist.
 **Flow:**
 1. Go to User Management
 2. Click "Invite User"
-3. Enter email, select role: "Government"
+3. Enter email, select role: "Government RRA" or "Government RSB"
 4. `POST /auth/invite` → 201
 5. Government official receives invitation email
 
 ### 2b. Universal Invitation (Any Role)
 
-Admin can invite **any** role in the system — not just Government.
+Admin can invite **any** role in the system — not just Government officials.
 
-**Supported invitation targets:** `importer`, `agent`, `agency_manager`, `inspector`, `government`
+**Supported invitation targets:** `importer`, `agent`, `agency_manager`, `inspector`, `government_rra`, `government_rsb`
 
 **Flow:**
 1. Go to User Management → "Invite User"
@@ -87,7 +87,7 @@ Admin can invite **any** role in the system — not just Government.
 4. `POST /auth/invite` → 201
 5. User receives invitation email with a registration link
 
-> Agency managers and government officials can still invite their own downstream roles as before. Admin simply has no restrictions.
+> Agency managers can invite agents. Government RRA/RSB officials can invite their own respective roles. Admin can invite all non-admin roles.
 
 ### 3. Monitor System via Audit Logs
 
@@ -201,7 +201,7 @@ Even admins have boundaries:
 | Deactivate another admin | No | Prevents admin power struggles — one rogue admin can't lock out all others |
 | Self-deactivate | No | Would lock themselves out |
 | Invite admin via invitation system | No | Admin creation is a server-side operation |
-| Invite any other role | Yes | Admin can invite importer, agent, agency_manager, inspector, government |
+| Invite any other role | Yes | Admin can invite importer, agent, agency_manager, inspector, government_rra, government_rsb |
 | Shadow any non-admin user | Yes | Full access shadow mode with audit trail |
 | Shadow another admin | No | Admin-to-admin shadowing is blocked |
 | Access importer's payment data | Per permissions | Auth service manages identity, not data access |
@@ -227,8 +227,8 @@ Admins have elevated privileges, so session security is critical:
 
 ```
 System deploys → Auto-seed creates first admin from env vars
-First admin logs in → Creates agencies, invites government users  
-Government users onboard → Invite inspectors
+First admin logs in → Creates agencies, invites government_rra/government_rsb users  
+Government RRA/RSB users onboard → Invite their own role members
 Agency managers self-register → Select their agency → Invite agents
 Importers self-register → Start using the platform
 ```
