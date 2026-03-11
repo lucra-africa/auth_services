@@ -1,12 +1,21 @@
 from pydantic import BaseModel
 
 
+class AddressResponse(BaseModel):
+    street: str | None = None
+    city: str | None = None
+    province: str | None = None
+    country: str | None = None
+
+
 class ProfileResponse(BaseModel):
     first_name: str
     last_name: str
     phone: str | None = None
+    phone_number: str | None = None
     company_name: str | None = None
     avatar_url: str | None = None
+    address: AddressResponse | None = None
     metadata: dict | None = None
 
 
@@ -34,16 +43,27 @@ class TokenResponse(BaseModel):
     user: UserResponse | None = None
 
 
+class AddressInput(BaseModel):
+    street: str | None = None
+    city: str | None = None
+    province: str | None = None
+    country: str | None = None
+
+
 class ProfileCompleteRequest(BaseModel):
     first_name: str
     last_name: str
     phone: str | None = None
+    phone_number: str | None = None
     company_name: str | None = None
     agency_id: str | None = None
+    address: AddressInput | None = None
 
 
 class ProfileUpdateRequest(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     phone: str | None = None
+    phone_number: str | None = None
     company_name: str | None = None
+    address: AddressInput | None = None
