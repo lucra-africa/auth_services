@@ -1,10 +1,10 @@
 """Invitation API routes."""
 
 from fastapi import APIRouter, Depends, Request, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.core.dependencies import get_current_verified_user
-from src.database import get_db
+from src.db.mongo import get_db
 from src.schemas.auth import InvitedSignupRequest, InviteRequest
 from src.services import auth_service
 from src.services.log_service import get_client_ip
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/invitations", tags=["invitations"])
 async def create_invitation(
     body: InviteRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     return await auth_service.send_invitation(
@@ -34,7 +34,7 @@ async def create_invitation(
 async def send_invitation(
     body: InviteRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     return await auth_service.send_invitation(
@@ -53,7 +53,7 @@ async def list_invitations(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status: str = Query(None, regex="^(pending|used|expired)$"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     return await auth_service.list_invitations(
@@ -62,7 +62,7 @@ async def list_invitations(
 
 
 @router.get("/validate/{token}")
-async def validate_invitation(token: str, db: AsyncSession = Depends(get_db)):
+async def validate_invitation(token: str, db: AsyncIOMotorDatabase = Depends(get_db)):
     return await auth_service.validate_invitation(db, token=token)
 
 
@@ -70,7 +70,7 @@ async def validate_invitation(token: str, db: AsyncSession = Depends(get_db)):
 async def invited_signup(
     body: InvitedSignupRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     return await auth_service.signup_invited(
         db,
