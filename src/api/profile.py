@@ -25,8 +25,10 @@ async def complete_profile(
         first_name=body.first_name,
         last_name=body.last_name,
         phone=body.phone,
+        phone_number=body.phone_number,
         company_name=body.company_name,
         agency_id=body.agency_id,
+        address=body.address.model_dump() if body.address else None,
         ip_address=get_client_ip(request),
         user_agent_str=request.headers.get("user-agent"),
     )
