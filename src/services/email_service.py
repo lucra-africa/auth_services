@@ -81,8 +81,9 @@ def _build_password_reset_email_html(reset_url: str) -> str:
 
 ROLE_LABELS = {
     "agent": "Customs Agent",
-    "inspector": "Customs Inspector",
-    "government": "Government Official",
+    "inspector": "Warehouse Inspector",
+    "government_rra": "RRA Official",
+    "government_rsb": "RSB Official",
     "agency_manager": "Agency Manager",
 }
 
