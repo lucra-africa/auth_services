@@ -2,7 +2,12 @@
 
 ## Who is the Government Official?
 
-A government official oversees customs operations at a national level. They monitor trade volumes, review aggregate analytics, manage inspector assignments, and ensure regulatory compliance. Government users are invited by System Admins — reflecting the real-world process where government access to systems is provisioned by the system operator.
+Government officials oversee customs operations at a national level. There are two distinct types:
+
+- **RRA Officials** (`government_rra`) — Rwanda Revenue Authority officers who verify customs declarations, review tax breakdowns, collect duties, and clear shipments. Maps to backend roles: `STAKEHOLDER_RRA` / `STAKEHOLDER_ADMIN_RRA`.
+- **RSB Officials** (`government_rsb`) — Rwanda Standards Board officers who review product certificates, verify compliance with quality/safety standards, and approve or flag imports. Maps to backend roles: `STAKEHOLDER_RSB` / `STAKEHOLDER_ADMIN_RSB`.
+
+Both types are invited by System Admins. RRA officials can invite other RRA officials. RSB officials can invite other RSB officials.
 
 ---
 
@@ -13,14 +18,14 @@ A government official oversees customs operations at a national level. They moni
 1. System Admin logs into Poruta
 2. Goes to user management
 3. Enters the government official's email
-4. Selects role: "Government"
+4. Selects role: "Government (RRA)" or "Government (RSB)"
 5. Clicks "Send Invitation"
-6. `POST /auth/invite` with `{email, role: "government"}`
+6. `POST /api/v1/invitations/create` with `{email, role: "government_rra"}` or `{email, role: "government_rsb"}`
 
 The official receives:
 ```
 Subject: You've been invited to join Poruta
-"The System Administrator has invited you to join Poruta as a Government Official."
+"The System Administrator has invited you to join Poruta as an RRA Official."
 [Accept Invitation] → {frontend}/signup/invite?token=def456
 "This invitation expires in 24 hours."
 ```
@@ -28,10 +33,10 @@ Subject: You've been invited to join Poruta
 ### Step 1: Click Invitation Link
 
 1. Browser opens `/signup/invite?token=def456`
-2. Frontend calls `GET /auth/invite/validate?token=def456`
-3. Response: `{email, role: "government", invited_by: {name: "System Administrator"}}`
+2. Frontend calls `GET /api/v1/invitations/validate/def456`
+3. Response: `{email, role: "government_rra", invited_by: {name: "System Administrator"}}`
 4. Frontend displays:
-   - "You've been invited to join Poruta as a Government Official"
+   - "You've been invited to join Poruta as an RRA Official"
    - Email (pre-filled, read-only)
 
 ### Step 2: Complete Signup
@@ -43,7 +48,7 @@ Subject: You've been invited to join Poruta
 - Phone Number
 
 **What happens:**
-- `POST /auth/signup/invited` → 201
+- `POST /api/v1/invitations/signup` → 201
 - Account: `is_email_verified=true`, `profile_completed=true`
 - Auto-logged in → redirect to Government Dashboard
 
