@@ -25,6 +25,8 @@ async def signup(body: SignupRequest, request: Request, db: AsyncIOMotorDatabase
         email=body.email,
         password=body.password,
         role=body.role,
+        phone_number=body.phone_number,
+        address=body.address.model_dump() if body.address else None,
         ip_address=get_client_ip(request),
         user_agent_str=request.headers.get("user-agent"),
     )
