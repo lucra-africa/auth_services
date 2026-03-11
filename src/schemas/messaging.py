@@ -68,3 +68,18 @@ class ThreadResponse(BaseModel):
 
 class ThreadDetailResponse(ThreadResponse):
     messages: list[MessageResponse] = []
+
+
+# ── Contact schemas ─────────────────────────────────────────────────
+
+class ContactResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    role: str
+    agency_name: str | None = None
+
+
+class ContactListResponse(BaseModel):
+    items: list[ContactResponse] = []
+    total: int = 0
