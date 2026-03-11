@@ -59,6 +59,7 @@ services:
       SMTP_FROM_NAME: Poruta
       APP_PORT: "8050"
       APP_DEBUG: "true"
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-poruta-internal-service-key-change-in-production}
     depends_on:
       mongodb:
         condition: service_healthy
