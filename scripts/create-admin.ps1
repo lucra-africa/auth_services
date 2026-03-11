@@ -44,7 +44,7 @@ python -m src.cli create-admin --email "admin3@poruta.com" --password "AdminPass
 # Restart the server to trigger auto-seeding:
 # cd "c:\Users\Admin\OneDrive\Desktop\Poruta\auth_services"
 # $env:PYTHONPATH = (Get-Location).Path
-# python -m uvicorn src.main:app --host 0.0.0.0 --port 5000 --reload
+# python -m uvicorn src.main:app --host 0.0.0.0 --port 8050 --reload
 
 # ══════════════════════════════════════════════════════════════════════
 # VERIFY ADMINS IN DATABASE
