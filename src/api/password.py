@@ -1,10 +1,10 @@
 """Password management API routes."""
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.core.dependencies import get_current_user
-from src.database import get_db
+from src.db.mongo import get_db
 from src.schemas.auth import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/password", tags=["password"])
 async def forgot_password(
     body: ForgotPasswordRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     return await auth_service.forgot_password(
         db,
@@ -34,7 +34,7 @@ async def forgot_password(
 async def reset_password(
     body: ResetPasswordRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     return await auth_service.reset_password(
         db,
@@ -49,7 +49,7 @@ async def reset_password(
 async def change_password(
     body: ChangePasswordRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_user),
 ):
     return await auth_service.change_password(
