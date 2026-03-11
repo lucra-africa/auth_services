@@ -2,12 +2,168 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.core import AuthorizationError, NotFoundError, ValidationError
+
+
+# ── Contact discovery ───────────────────────────────────────────────
+
+async def get_contacts(
+    db: AsyncIOMotorDatabase,
+    *,
+    caller_id,
+    caller_role: str,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict:
+    """Return users the caller is allowed to message, based on role and agency."""
+    if isinstance(caller_id, str):
+        caller_id = ObjectId(caller_id)
+
+    # Build the user query filter based on role
+    user_filter = await _build_contact_filter(db, caller_id, caller_role)
+    if user_filter is None:
+        return {"items": [], "total": 0}
+
+    # Apply search filter
+    if search:
+        safe = re.escape(search)
+        search_cond = {"$or": [
+            {"email": {"$regex": safe, "$options": "i"}},
+            {"profile.first_name": {"$regex": safe, "$options": "i"}},
+            {"profile.last_name": {"$regex": safe, "$options": "i"}},
+        ]}
+        user_filter = {"$and": [user_filter, search_cond]}
+
+    total = await db.users.count_documents(user_filter)
+
+    cursor = (
+        db.users.find(user_filter, {"email": 1, "role": 1, "profile": 1})
+        .sort("email", 1)
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    users = await cursor.to_list(length=page_size)
+
+    # Batch-resolve agency names for these users
+    user_ids = [u["_id"] for u in users]
+    agency_map = await _resolve_agency_names(db, user_ids)
+
+    items = []
+    for u in users:
+        profile = u.get("profile") or {}
+        name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
+        items.append({
+            "id": str(u["_id"]),
+            "name": name or u["email"],
+            "email": u["email"],
+            "role": u.get("role", ""),
+            "agency_name": agency_map.get(u["_id"]),
+        })
+
+    return {"items": items, "total": total}
+
+
+async def _build_contact_filter(
+    db: AsyncIOMotorDatabase, caller_id: ObjectId, caller_role: str,
+) -> dict | None:
+    """Return a MongoDB filter for users the caller can contact, or None if none."""
+    base = {"is_active": True, "_id": {"$ne": caller_id}}
+
+    if caller_role in ("government_rra", "government_rsb", "admin"):
+        return base
+
+    if caller_role == "inspector":
+        return {**base, "role": {"$in": ["agent", "importer", "government_rra", "government_rsb"]}}
+
+    # For importer, agent, agency_manager — scope by agency membership
+    agency = await db.agencies.find_one(
+        {"members.user_id": caller_id},
+        {"members": 1, "name": 1},
+    )
+    if not agency:
+        return None  # not in any agency — no contacts
+
+    member_ids = [
+        m["user_id"] for m in agency.get("members", [])
+        if m["user_id"] != caller_id
+    ]
+
+    if caller_role == "importer":
+        # Only agents in the same agency
+        agent_ids = [
+            m["user_id"] for m in agency.get("members", [])
+            if m["user_id"] != caller_id and m.get("role_in_agency") == "agent"
+        ]
+        # Also include the agency manager(s)
+        manager_ids = [
+            m["user_id"] for m in agency.get("members", [])
+            if m["user_id"] != caller_id and m.get("role_in_agency") == "manager"
+        ]
+        allowed_ids = agent_ids + manager_ids
+        if not allowed_ids:
+            return None
+        return {"_id": {"$in": allowed_ids}, "is_active": True}
+
+    if caller_role == "agent":
+        # All members of the same agency (agents, managers, importers)
+        if not member_ids:
+            return None
+        return {"_id": {"$in": member_ids}, "is_active": True}
+
+    if caller_role == "agency_manager":
+        # Agency members + other agency managers across platform
+        return {"$or": [
+            {"_id": {"$in": member_ids}, "is_active": True},
+            {"role": "agency_manager", "_id": {"$ne": caller_id}, "is_active": True},
+        ]}
+
+    return base
+
+
+async def _resolve_agency_names(
+    db: AsyncIOMotorDatabase, user_ids: list[ObjectId],
+) -> dict[ObjectId, str | None]:
+    """Map user ObjectIds to their agency name (if any)."""
+    if not user_ids:
+        return {}
+    cursor = db.agencies.find(
+        {"members.user_id": {"$in": user_ids}},
+        {"name": 1, "members.user_id": 1},
+    )
+    result: dict[ObjectId, str | None] = {}
+    async for agency in cursor:
+        for m in agency.get("members", []):
+            if m["user_id"] in user_ids:
+                result[m["user_id"]] = agency.get("name")
+    return result
+
+
+async def _get_allowed_contact_ids(
+    db: AsyncIOMotorDatabase, caller_id: ObjectId, caller_role: str,
+) -> set[ObjectId] | None:
+    """Return the set of user IDs the caller can contact, or None for 'everyone'."""
+    if caller_role in ("government_rra", "government_rsb", "admin"):
+        return None  # no restriction
+
+    if caller_role == "inspector":
+        cursor = db.users.find(
+            {"role": {"$in": ["agent", "importer", "government_rra", "government_rsb"]}, "is_active": True},
+            {"_id": 1},
+        )
+        return {u["_id"] async for u in cursor}
+
+    filt = await _build_contact_filter(db, caller_id, caller_role)
+    if filt is None:
+        return set()
+    cursor = db.users.find(filt, {"_id": 1})
+    return {u["_id"] async for u in cursor}
 
 
 # ── Thread operations ───────────────────────────────────────────────
@@ -32,6 +188,23 @@ async def create_thread(
     found_count = await db.users.count_documents({"_id": {"$in": list(all_ids)}})
     if found_count != len(all_ids):
         raise ValidationError("One or more users not found")
+
+    # Validate contact permissions
+    other_ids = all_ids - {creator["_id"]}
+    allowed = await _get_allowed_contact_ids(db, creator["_id"], creator.get("role", ""))
+    if allowed is not None:  # None means no restriction
+        denied = other_ids - allowed
+        if denied:
+            raise AuthorizationError("You cannot message one or more of the selected users")
+
+    # Duplicate direct thread detection
+    if thread_type == "direct" and len(all_ids) == 2:
+        existing = await db.threads.find_one({
+            "thread_type": "direct",
+            "participant_ids": {"$all": list(all_ids), "$size": 2},
+        })
+        if existing:
+            return await _build_thread_response(db, existing, creator["_id"])
 
     now = datetime.now(timezone.utc)
 
