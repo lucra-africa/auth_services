@@ -35,7 +35,7 @@ auth_services/
 # Application
 APP_NAME=poruta-auth
 APP_ENV=development
-APP_PORT=5000
+APP_PORT=8050
 APP_DEBUG=true
 
 # Database
@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     # App
     app_name: str = "poruta-auth"
     app_env: str = "development"  # development | staging | production
-    app_port: int = 5000
+    app_port: int = 8050
     app_debug: bool = True
 
     # Database
@@ -131,13 +131,13 @@ class Settings(BaseSettings):
 
 ### docker-compose.yml
 - **`postgres`**: PostgreSQL 16, port 5432, volume for data persistence, creates `poruta_auth` database
-- **`auth`**: Built from Dockerfile, port 5000, depends on postgres, env_file .env
+- **`auth`**: Built from Dockerfile, port 8050, depends on postgres, env_file .env
 
 ### Dockerfile
 - Multi-stage: `python:3.12-slim` base
 - Install system deps for `asyncpg` and `argon2-cffi` (minimal: `libpq-dev`)
 - Copy requirements, install, copy src
-- Run with `uvicorn src.main:app --host 0.0.0.0 --port 5000`
+- Run with `uvicorn src.main:app --host 0.0.0.0 --port 8050`
 
 ---
 
@@ -161,7 +161,7 @@ Pin to minor versions for reproducibility. Eight packages total.
 ## Acceptance Criteria
 
 - [ ] `docker-compose up` starts PostgreSQL and the auth service
-- [ ] `GET http://localhost:5000/health` returns `{"status": "healthy"}`
+- [ ] `GET http://localhost:8050/health` returns `{"status": "healthy"}`
 - [ ] Config loads all environment variables with defaults
 - [ ] CORS allows requests from `CORS_ORIGINS`
 - [ ] Invalid/missing required config variables cause startup failure with clear error message
