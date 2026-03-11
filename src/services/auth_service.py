@@ -1,10 +1,10 @@
-"""Core authentication business logic."""
+"""Core authentication business logic — MongoDB version."""
 
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.config import settings
 from src.core import (
@@ -25,15 +25,7 @@ from src.core.security import (
     validate_password_strength,
     verify_password,
 )
-from src.models.enums import AgencyRole, AuthAction, UserRole
-from src.models.token import (
-    EmailVerificationToken,
-    InvitationToken,
-    PasswordResetToken,
-    RefreshToken,
-)
-from src.models.user import User, UserProfile
-from src.models.agency import Agency, UserAgency
+from src.models.enums import AuthAction
 from src.services import email_service
 from src.services.log_service import log_action
 
@@ -48,40 +40,41 @@ INVITATION_PERMISSIONS: dict[str, list[str]] = {
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
-def _build_user_response(user: User) -> dict:
-    """Build user dict for API responses."""
+def _build_user_response(user: dict) -> dict:
+    """Build user dict for API responses. `user` is a MongoDB document."""
+    profile = user.get("profile")
     profile_data = None
-    if user.profile:
+    if profile:
         profile_data = {
-            "first_name": user.profile.first_name,
-            "last_name": user.profile.last_name,
-            "phone": user.profile.phone,
-            "company_name": user.profile.company_name,
-            "avatar_url": user.profile.avatar_url,
-            "metadata": user.profile.metadata_,
+            "first_name": profile.get("first_name"),
+            "last_name": profile.get("last_name"),
+            "phone": profile.get("phone"),
+            "company_name": profile.get("company_name"),
+            "avatar_url": profile.get("avatar_url"),
+            "metadata": profile.get("metadata", {}),
         }
 
     agency_data = None
-    if user.agency_links:
-        link = user.agency_links[0]
+    if user.get("agency"):
+        ag = user["agency"]
         agency_data = {
-            "id": str(link.agency_id),
-            "name": link.agency.name if link.agency else None,
-            "role_in_agency": link.role_in_agency.value,
+            "id": str(ag["agency_id"]),
+            "name": ag.get("name"),
+            "role_in_agency": ag.get("role_in_agency"),
         }
 
     return {
-        "id": str(user.id),
-        "email": user.email,
-        "role": user.role.value,
-        "is_email_verified": user.is_email_verified,
-        "profile_completed": user.profile_completed,
+        "id": str(user["_id"]),
+        "email": user["email"],
+        "role": user["role"],
+        "is_email_verified": user.get("is_email_verified", False),
+        "profile_completed": user.get("profile_completed", False),
         "profile": profile_data,
         "agency": agency_data,
     }
 
 
-def _build_token_response(user: User, access_token: str, refresh_token: str) -> dict:
+def _build_token_response(user: dict, access_token: str, refresh_token: str) -> dict:
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -91,34 +84,54 @@ def _build_token_response(user: User, access_token: str, refresh_token: str) -> 
     }
 
 
-async def _get_user_by_email(db: AsyncSession, email: str) -> User | None:
-    result = await db.execute(select(User).where(User.email == email))
-    return result.scalar_one_or_none()
+async def _get_user_by_email(db: AsyncIOMotorDatabase, email: str) -> dict | None:
+    return await db.users.find_one({"email": email})
 
 
 async def _create_token_pair(
-    db: AsyncSession, user: User, ip_address: str | None = None, user_agent_str: str | None = None
+    db: AsyncIOMotorDatabase, user: dict, ip_address: str | None = None, user_agent_str: str | None = None
 ) -> tuple[str, str]:
-    access = create_access_token(str(user.id), user.role.value, user.email)
-    refresh = create_refresh_token_jwt(str(user.id))
+    user_id_str = str(user["_id"])
+    access = create_access_token(user_id_str, user["role"], user["email"])
+    refresh = create_refresh_token_jwt(user_id_str)
 
     refresh_hash = hash_token(refresh)
-    rt = RefreshToken(
-        user_id=user.id,
-        token_hash=refresh_hash,
-        ip_address=ip_address,
-        device_info=user_agent_str[:255] if user_agent_str else None,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_token_expire_days),
-    )
-    db.add(rt)
-    await db.flush()
+    now = datetime.now(timezone.utc)
+    await db.refresh_tokens.insert_one({
+        "user_id": user["_id"],
+        "token_hash": refresh_hash,
+        "ip_address": ip_address,
+        "device_info": user_agent_str[:255] if user_agent_str else None,
+        "expires_at": now + timedelta(days=settings.jwt_refresh_token_expire_days),
+        "revoked_at": None,
+        "created_at": now,
+    })
     return access, refresh
+
+
+async def _reload_user(db: AsyncIOMotorDatabase, user_id: ObjectId) -> dict:
+    """Reload user with agency lookup for response building."""
+    user = await db.users.find_one({"_id": user_id})
+    if user:
+        # Lookup agency membership
+        agency_doc = await db.agencies.find_one(
+            {"members.user_id": user_id},
+            {"name": 1, "members.$": 1},
+        )
+        if agency_doc and agency_doc.get("members"):
+            member = agency_doc["members"][0]
+            user["agency"] = {
+                "agency_id": agency_doc["_id"],
+                "name": agency_doc.get("name"),
+                "role_in_agency": member.get("role_in_agency"),
+            }
+    return user
 
 
 # ── Signup ──────────────────────────────────────────────────────────
 
 async def signup(
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
     email: str,
     password: str,
     role: str,
@@ -133,87 +146,110 @@ async def signup(
     if existing:
         raise ConflictError("Email already registered")
 
-    user = User(
-        email=email,
-        password_hash=hash_password(password),
-        role=UserRole(role),
-        is_email_verified=True,
-        is_active=True,
-        profile_completed=False,
-    )
-    db.add(user)
-    await db.flush()
+    now = datetime.now(timezone.utc)
+    user_doc = {
+        "email": email,
+        "password_hash": hash_password(password),
+        "role": role,
+        "is_email_verified": False,
+        "is_active": True,
+        "profile_completed": False,
+        "profile": None,
+        "failed_login_count": 0,
+        "locked_until": None,
+        "last_login_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await db.users.insert_one(user_doc)
+    user_id = result.inserted_id
+
+    # Generate email verification token
+    raw_token = generate_token()
+    await db.email_verification_tokens.insert_one({
+        "user_id": user_id,
+        "token_hash": hash_token(raw_token),
+        "expires_at": now + timedelta(hours=24),
+        "used_at": None,
+        "created_at": now,
+    })
+
+    await email_service.send_verification_email(email, raw_token)
 
     await log_action(
         db, AuthAction.SIGNUP,
-        user_id=str(user.id), email=email,
+        user_id=str(user_id), email=email,
         ip_address=ip_address, user_agent=user_agent_str,
         metadata={"role": role},
     )
 
-    return {"message": "Account created successfully. You can now log in.", "email": email}
+    from src.services.notification_triggers import on_signup
+    await on_signup(db, user_id, email)
+
+    return {"message": "Account created successfully. Please check your email to verify your address.", "email": email}
 
 
 # ── Email Verification ──────────────────────────────────────────────
 
 async def verify_email(
-    db: AsyncSession, token: str, ip_address: str | None = None, user_agent_str: str | None = None
+    db: AsyncIOMotorDatabase, token: str, ip_address: str | None = None, user_agent_str: str | None = None
 ) -> dict:
     token_hash = hash_token(token)
-    result = await db.execute(
-        select(EmailVerificationToken).where(EmailVerificationToken.token_hash == token_hash)
-    )
-    evt = result.scalar_one_or_none()
+    evt = await db.email_verification_tokens.find_one({"token_hash": token_hash})
 
     if not evt:
         raise ValidationError("Invalid verification token")
-    if evt.used_at:
+    if evt.get("used_at"):
         raise ValidationError("Token has already been used")
-    if evt.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+    if evt["expires_at"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise ValidationError("Verification token has expired. Please request a new one.")
 
-    evt.used_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    await db.email_verification_tokens.update_one(
+        {"_id": evt["_id"]}, {"$set": {"used_at": now}}
+    )
 
-    result = await db.execute(select(User).where(User.id == evt.user_id))
-    user = result.scalar_one_or_none()
+    user = await db.users.find_one({"_id": evt["user_id"]})
     if not user:
         raise NotFoundError("User not found")
 
-    user.is_email_verified = True
+    await db.users.update_one(
+        {"_id": user["_id"]}, {"$set": {"is_email_verified": True, "updated_at": now}}
+    )
 
     await log_action(
         db, AuthAction.EMAIL_VERIFY,
-        user_id=str(user.id), email=user.email,
+        user_id=str(user["_id"]), email=user["email"],
         ip_address=ip_address, user_agent=user_agent_str,
     )
+
+    from src.services.notification_triggers import on_email_verified
+    await on_email_verified(db, user["_id"])
 
     return {"message": "Email verified successfully. You can now log in."}
 
 
 async def resend_verification(
-    db: AsyncSession, email: str, ip_address: str | None = None, user_agent_str: str | None = None
+    db: AsyncIOMotorDatabase, email: str, ip_address: str | None = None, user_agent_str: str | None = None
 ) -> dict:
     user = await _get_user_by_email(db, email)
 
-    if user and user.is_active and not user.is_email_verified:
+    if user and user.get("is_active") and not user.get("is_email_verified"):
+        now = datetime.now(timezone.utc)
         # Invalidate old tokens
-        await db.execute(
-            update(EmailVerificationToken)
-            .where(
-                EmailVerificationToken.user_id == user.id,
-                EmailVerificationToken.used_at.is_(None),
-            )
-            .values(used_at=datetime.now(timezone.utc))
+        await db.email_verification_tokens.update_many(
+            {"user_id": user["_id"], "used_at": None},
+            {"$set": {"used_at": now}},
         )
 
         raw_token = generate_token()
-        evt = EmailVerificationToken(
-            user_id=user.id,
-            token_hash=hash_token(raw_token),
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-        )
-        db.add(evt)
-        await db.flush()
+        await db.email_verification_tokens.insert_one({
+            "user_id": user["_id"],
+            "token_hash": hash_token(raw_token),
+            "expires_at": now + timedelta(hours=24),
+            "used_at": None,
+            "created_at": now,
+        })
 
         await email_service.send_verification_email(email, raw_token)
 
@@ -223,7 +259,7 @@ async def resend_verification(
 # ── Login ────────────────────────────────────────────────────────────
 
 async def login(
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
     email: str,
     password: str,
     ip_address: str | None = None,
@@ -239,13 +275,13 @@ async def login(
         )
         raise AuthenticationError("Invalid email or password")
 
-    if not user.is_active:
+    if not user.get("is_active"):
         raise AuthenticationError("Account has been deactivated. Contact support.")
 
-    # Check lockout
     now = datetime.now(timezone.utc)
-    if user.locked_until:
-        lock_time = user.locked_until.replace(tzinfo=timezone.utc) if user.locked_until.tzinfo is None else user.locked_until
+    locked_until = user.get("locked_until")
+    if locked_until:
+        lock_time = locked_until.replace(tzinfo=timezone.utc) if locked_until.tzinfo is None else locked_until
         if lock_time > now:
             minutes_left = int((lock_time - now).total_seconds() / 60) + 1
             raise AccountLockedError(
@@ -253,47 +289,62 @@ async def login(
                 locked_until=lock_time.isoformat(),
             )
         else:
-            user.failed_login_count = 0
-            user.locked_until = None
+            await db.users.update_one(
+                {"_id": user["_id"]},
+                {"$set": {"failed_login_count": 0, "locked_until": None}},
+            )
 
-    if not verify_password(password, user.password_hash):
-        user.failed_login_count += 1
-        attempt = user.failed_login_count
+    if not verify_password(password, user["password_hash"]):
+        attempt = user.get("failed_login_count", 0) + 1
 
         await log_action(
             db, AuthAction.FAILED_LOGIN,
-            user_id=str(user.id), email=email,
+            user_id=str(user["_id"]), email=email,
             ip_address=ip_address, user_agent=user_agent_str,
             metadata={"attempt": attempt, "reason": "wrong_password"},
         )
 
+        update_fields: dict = {"failed_login_count": attempt}
+
         if attempt >= 5:
-            user.locked_until = now + timedelta(minutes=15)
+            lock_until = now + timedelta(minutes=15)
+            update_fields["locked_until"] = lock_until
+            await db.users.update_one({"_id": user["_id"]}, {"$set": update_fields})
             await log_action(
                 db, AuthAction.ACCOUNT_LOCKED,
-                user_id=str(user.id), email=email,
+                user_id=str(user["_id"]), email=email,
                 ip_address=ip_address, user_agent=user_agent_str,
                 metadata={"failed_attempts": attempt, "lockout_duration_minutes": 15},
             )
-            await db.flush()
             raise AccountLockedError(
                 "Account locked due to too many failed attempts. Try again in 15 minutes.",
-                locked_until=user.locked_until.isoformat(),
+                locked_until=lock_until.isoformat(),
             )
 
-        await db.flush()
+        await db.users.update_one({"_id": user["_id"]}, {"$set": update_fields})
         raise AuthenticationError("Invalid email or password")
 
+    # Block unverified users
+    if not user.get("is_email_verified"):
+        raise AuthorizationError(
+            "Please verify your email address before logging in. "
+            "Check your inbox for the verification link."
+        )
+
     # Success
-    user.failed_login_count = 0
-    user.locked_until = None
-    user.last_login_at = now
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"failed_login_count": 0, "locked_until": None, "last_login_at": now}},
+    )
+
+    # Reload user for response (need agency data)
+    user = await _reload_user(db, user["_id"])
 
     access, refresh = await _create_token_pair(db, user, ip_address, user_agent_str)
 
     await log_action(
         db, AuthAction.LOGIN,
-        user_id=str(user.id), email=email,
+        user_id=str(user["_id"]), email=email,
         ip_address=ip_address, user_agent=user_agent_str,
     )
 
@@ -303,7 +354,7 @@ async def login(
 # ── Token Refresh ────────────────────────────────────────────────────
 
 async def refresh_tokens(
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
     refresh_token_str: str,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
@@ -313,32 +364,33 @@ async def refresh_tokens(
         raise AuthenticationError("Invalid token type")
 
     token_hash = hash_token(refresh_token_str)
-    result = await db.execute(
-        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
-    )
-    stored = result.scalar_one_or_none()
+    stored = await db.refresh_tokens.find_one({"token_hash": token_hash})
 
     if not stored:
         raise AuthenticationError("Invalid refresh token")
-    if stored.revoked_at:
+    if stored.get("revoked_at"):
         raise AuthenticationError("Token has been revoked")
     now = datetime.now(timezone.utc)
-    expires = stored.expires_at.replace(tzinfo=timezone.utc) if stored.expires_at.tzinfo is None else stored.expires_at
+    expires = stored["expires_at"]
+    if hasattr(expires, 'tzinfo') and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
     if expires <= now:
         raise AuthenticationError("Refresh token has expired")
 
-    result = await db.execute(select(User).where(User.id == stored.user_id))
-    user = result.scalar_one_or_none()
-    if not user or not user.is_active:
+    user = await _reload_user(db, stored["user_id"])
+    if not user or not user.get("is_active"):
         raise AuthenticationError("User not found or deactivated")
 
-    # Rotate
-    stored.revoked_at = now
+    # Rotate — revoke old token
+    await db.refresh_tokens.update_one(
+        {"_id": stored["_id"]}, {"$set": {"revoked_at": now}}
+    )
+
     access, new_refresh = await _create_token_pair(db, user, ip_address, user_agent_str)
 
     await log_action(
         db, AuthAction.TOKEN_REFRESH,
-        user_id=str(user.id), email=user.email,
+        user_id=str(user["_id"]), email=user["email"],
         ip_address=ip_address, user_agent=user_agent_str,
     )
 
@@ -348,27 +400,22 @@ async def refresh_tokens(
 # ── Logout ───────────────────────────────────────────────────────────
 
 async def logout(
-    db: AsyncSession,
-    user: User,
+    db: AsyncIOMotorDatabase,
+    user: dict,
     refresh_token_str: str | None = None,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
     if refresh_token_str:
         token_hash = hash_token(refresh_token_str)
-        result = await db.execute(
-            select(RefreshToken).where(
-                RefreshToken.token_hash == token_hash,
-                RefreshToken.user_id == user.id,
-            )
+        await db.refresh_tokens.update_one(
+            {"token_hash": token_hash, "user_id": user["_id"], "revoked_at": None},
+            {"$set": {"revoked_at": datetime.now(timezone.utc)}},
         )
-        stored = result.scalar_one_or_none()
-        if stored and not stored.revoked_at:
-            stored.revoked_at = datetime.now(timezone.utc)
 
     await log_action(
         db, AuthAction.LOGOUT,
-        user_id=str(user.id), email=user.email,
+        user_id=str(user["_id"]), email=user["email"],
         ip_address=ip_address, user_agent=user_agent_str,
     )
 
@@ -378,31 +425,30 @@ async def logout(
 # ── Invitation ───────────────────────────────────────────────────────
 
 async def send_invitation(
-    db: AsyncSession,
-    inviter: User,
+    db: AsyncIOMotorDatabase,
+    inviter: dict,
     email: str,
     role: str,
     agency_id: str | None = None,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
-    allowed_targets = INVITATION_PERMISSIONS.get(inviter.role.value, [])
+    allowed_targets = INVITATION_PERMISSIONS.get(inviter["role"], [])
     if role not in allowed_targets:
-        raise AuthorizationError(f"Role '{inviter.role.value}' cannot invite '{role}' users")
+        raise AuthorizationError(f"Role '{inviter['role']}' cannot invite '{role}' users")
 
     existing_user = await _get_user_by_email(db, email)
     if existing_user:
         raise ConflictError("A user with this email already exists")
 
     # Check for pending invitation
-    result = await db.execute(
-        select(InvitationToken).where(
-            InvitationToken.email == email,
-            InvitationToken.used_at.is_(None),
-            InvitationToken.expires_at > datetime.now(timezone.utc),
-        )
-    )
-    if result.scalar_one_or_none():
+    now = datetime.now(timezone.utc)
+    pending = await db.invitation_tokens.find_one({
+        "email": email,
+        "used_at": None,
+        "expires_at": {"$gt": now},
+    })
+    if pending:
         raise ConflictError("An active invitation already exists for this email")
 
     resolved_agency_id = None
@@ -411,122 +457,106 @@ async def send_invitation(
     if role == "agent":
         if not agency_id:
             raise ValidationError("agency_id is required when inviting an agent")
-        result = await db.execute(select(Agency).where(Agency.id == agency_id))
-        agency = result.scalar_one_or_none()
+        try:
+            agency_oid = ObjectId(agency_id)
+        except Exception:
+            raise NotFoundError("Agency not found")
+        agency = await db.agencies.find_one({"_id": agency_oid})
         if not agency:
             raise NotFoundError("Agency not found")
-        if not agency.is_active:
+        if not agency.get("is_active"):
             raise ValidationError("Agency has been deactivated")
 
         # Admins can invite agents to any agency; others must belong to the agency
-        if inviter.role != UserRole.ADMIN:
-            result = await db.execute(
-                select(UserAgency).where(
-                    UserAgency.user_id == inviter.id,
-                    UserAgency.agency_id == agency.id,
-                )
-            )
-            if not result.scalar_one_or_none():
+        if inviter["role"] != "admin":
+            is_member = await db.agencies.find_one({
+                "_id": agency_oid,
+                "members.user_id": inviter["_id"],
+            })
+            if not is_member:
                 raise AuthorizationError("You can only invite agents to your own agency")
 
-        resolved_agency_id = agency.id
-        agency_name = agency.name
+        resolved_agency_id = agency_oid
+        agency_name = agency["name"]
 
     raw_token = generate_token()
-    invitation = InvitationToken(
-        token_hash=hash_token(raw_token),
-        email=email,
-        role=UserRole(role),
-        invited_by=inviter.id,
-        agency_id=resolved_agency_id,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-    )
-    db.add(invitation)
-    await db.flush()
+    invitation_doc = {
+        "token_hash": hash_token(raw_token),
+        "email": email,
+        "role": role,
+        "invited_by": inviter["_id"],
+        "agency_id": resolved_agency_id,
+        "expires_at": now + timedelta(hours=24),
+        "used_at": None,
+        "created_at": now,
+    }
+    await db.invitation_tokens.insert_one(invitation_doc)
 
     # Get inviter name
     inviter_name = "Administrator"
-    if inviter.profile:
-        inviter_name = f"{inviter.profile.first_name} {inviter.profile.last_name}"
+    inviter_profile = inviter.get("profile")
+    if inviter_profile:
+        inviter_name = f"{inviter_profile.get('first_name', '')} {inviter_profile.get('last_name', '')}".strip()
 
     await email_service.send_invitation_email(email, raw_token, inviter_name, role, agency_name)
 
     await log_action(
         db, AuthAction.INVITATION_SENT,
-        user_id=str(inviter.id), email=inviter.email,
+        user_id=str(inviter["_id"]), email=inviter["email"],
         ip_address=ip_address, user_agent=user_agent_str,
         metadata={"invited_email": email, "role": role, "agency_id": str(resolved_agency_id) if resolved_agency_id else None},
     )
 
     return {
         "message": f"Invitation sent to {email}",
-        "expires_at": invitation.expires_at.isoformat(),
+        "expires_at": invitation_doc["expires_at"].isoformat(),
     }
 
 
 async def list_invitations(
-    db: AsyncSession,
-    user: User,
+    db: AsyncIOMotorDatabase,
+    user: dict,
     page: int = 1,
     page_size: int = 20,
     status: str | None = None,
 ) -> dict:
     """List invitations created by the user."""
-    from sqlalchemy import func, or_
-
-    # Build base query
-    query = select(InvitationToken).where(InvitationToken.invited_by == user.id)
-
-    # Filter by status
     now = datetime.now(timezone.utc)
+    query: dict = {"invited_by": user["_id"]}
+
     if status == "pending":
-        query = query.where(
-            InvitationToken.used_at.is_(None),
-            InvitationToken.expires_at > now,
-        )
+        query["used_at"] = None
+        query["expires_at"] = {"$gt": now}
     elif status == "used":
-        query = query.where(InvitationToken.used_at.isnot(None))
+        query["used_at"] = {"$ne": None}
     elif status == "expired":
-        query = query.where(
-            InvitationToken.used_at.is_(None),
-            InvitationToken.expires_at <= now,
-        )
+        query["used_at"] = None
+        query["expires_at"] = {"$lte": now}
 
-    # Get total count
-    count_query = select(func.count()).select_from(query.subquery())
-    count_result = await db.execute(count_query)
-    total = count_result.scalar_one()
+    total = await db.invitation_tokens.count_documents(query)
 
-    # Apply pagination and ordering
-    query = query.order_by(InvitationToken.created_at.desc())
-    query = query.offset((page - 1) * page_size).limit(page_size)
+    cursor = db.invitation_tokens.find(query).sort("created_at", -1).skip((page - 1) * page_size).limit(page_size)
+    invitations = await cursor.to_list(length=page_size)
 
-    result = await db.execute(query)
-    invitations = result.scalars().all()
-
-    # Format response
     items = []
     for inv in invitations:
-        # Get agency name if applicable
         agency_name = None
-        if inv.agency_id:
-            agency_result = await db.execute(
-                select(Agency.name).where(Agency.id == inv.agency_id)
-            )
-            agency_name = agency_result.scalar_one_or_none()
+        if inv.get("agency_id"):
+            agency_doc = await db.agencies.find_one({"_id": inv["agency_id"]}, {"name": 1})
+            if agency_doc:
+                agency_name = agency_doc["name"]
 
-        # Determine status
-        inv_status = "used" if inv.used_at else ("expired" if inv.expires_at <= now else "pending")
+        inv_status = "used" if inv.get("used_at") else ("expired" if inv["expires_at"] <= now else "pending")
 
         items.append({
-            "id": str(inv.id),
-            "email": inv.email,
-            "role": inv.role.value,
+            "id": str(inv["_id"]),
+            "email": inv["email"],
+            "role": inv["role"],
             "agency_name": agency_name,
             "status": inv_status,
-            "expires_at": inv.expires_at.isoformat(),
-            "created_at": inv.created_at.isoformat(),
-            "used_at": inv.used_at.isoformat() if inv.used_at else None,
+            "expires_at": inv["expires_at"].isoformat(),
+            "created_at": inv["created_at"].isoformat(),
+            "used_at": inv["used_at"].isoformat() if inv.get("used_at") else None,
         })
 
     return {
@@ -534,51 +564,48 @@ async def list_invitations(
         "total": total,
         "page": page,
         "page_size": page_size,
-        "pages": (total + page_size - 1) // page_size,
+        "pages": (total + page_size - 1) // page_size if total > 0 else 0,
     }
 
 
-async def validate_invitation(db: AsyncSession, token: str) -> dict:
+async def validate_invitation(db: AsyncIOMotorDatabase, token: str) -> dict:
     token_hash = hash_token(token)
-    result = await db.execute(
-        select(InvitationToken).where(InvitationToken.token_hash == token_hash)
-    )
-    invitation = result.scalar_one_or_none()
+    invitation = await db.invitation_tokens.find_one({"token_hash": token_hash})
 
     if not invitation:
         raise ValidationError("Invalid invitation token")
-    if invitation.used_at:
+    if invitation.get("used_at"):
         raise ValidationError("This invitation has already been used")
-    if invitation.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+    if invitation["expires_at"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise ValidationError("Invitation has expired. Please contact your administrator.")
 
     # Get inviter info
-    result = await db.execute(select(User).where(User.id == invitation.invited_by))
-    inviter = result.scalar_one_or_none()
+    inviter = await db.users.find_one({"_id": invitation["invited_by"]})
     inviter_info = {"name": "Unknown", "email": ""}
-    if inviter and inviter.profile:
-        inviter_info = {
-            "name": f"{inviter.profile.first_name} {inviter.profile.last_name}",
-            "email": inviter.email,
-        }
+    if inviter:
+        profile = inviter.get("profile")
+        if profile:
+            inviter_info = {
+                "name": f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip(),
+                "email": inviter["email"],
+            }
 
     agency_info = None
-    if invitation.agency_id:
-        result = await db.execute(select(Agency).where(Agency.id == invitation.agency_id))
-        agency = result.scalar_one_or_none()
+    if invitation.get("agency_id"):
+        agency = await db.agencies.find_one({"_id": invitation["agency_id"]})
         if agency:
-            agency_info = {"id": str(agency.id), "name": agency.name}
+            agency_info = {"id": str(agency["_id"]), "name": agency["name"]}
 
     return {
-        "email": invitation.email,
-        "role": invitation.role.value,
+        "email": invitation["email"],
+        "role": invitation["role"],
         "invited_by": inviter_info,
         "agency": agency_info,
     }
 
 
 async def signup_invited(
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
     token: str,
     password: str,
     first_name: str,
@@ -588,74 +615,80 @@ async def signup_invited(
     user_agent_str: str | None = None,
 ) -> dict:
     token_hash = hash_token(token)
-    result = await db.execute(
-        select(InvitationToken).where(InvitationToken.token_hash == token_hash)
-    )
-    invitation = result.scalar_one_or_none()
+    invitation = await db.invitation_tokens.find_one({"token_hash": token_hash})
 
     if not invitation:
         raise ValidationError("Invalid invitation token")
-    if invitation.used_at:
+    if invitation.get("used_at"):
         raise ValidationError("This invitation has already been used")
-    if invitation.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+    if invitation["expires_at"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise ValidationError("Invitation has expired. Please contact your administrator.")
 
     violations = validate_password_strength(password)
     if violations:
         raise ValidationError("Password does not meet requirements", details=violations)
 
-    existing = await _get_user_by_email(db, invitation.email)
+    existing = await _get_user_by_email(db, invitation["email"])
     if existing:
         raise ConflictError("A user with this email already exists")
 
-    user = User(
-        email=invitation.email,
-        password_hash=hash_password(password),
-        role=invitation.role,
-        is_email_verified=True,
-        is_active=True,
-        profile_completed=True,
-    )
-    db.add(user)
-    await db.flush()
+    now = datetime.now(timezone.utc)
+    user_doc = {
+        "email": invitation["email"],
+        "password_hash": hash_password(password),
+        "role": invitation["role"],
+        "is_email_verified": True,
+        "is_active": True,
+        "profile_completed": True,
+        "profile": {
+            "first_name": first_name,
+            "last_name": last_name,
+            "phone": phone,
+            "company_name": None,
+            "avatar_url": None,
+            "metadata": {},
+        },
+        "failed_login_count": 0,
+        "locked_until": None,
+        "last_login_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    insert_result = await db.users.insert_one(user_doc)
+    user_id = insert_result.inserted_id
 
-    profile = UserProfile(
-        user_id=user.id,
-        first_name=first_name,
-        last_name=last_name,
-        phone=phone,
-        metadata_={},
-    )
-    db.add(profile)
-
-    if invitation.role == UserRole.AGENT and invitation.agency_id:
-        ua = UserAgency(
-            user_id=user.id,
-            agency_id=invitation.agency_id,
-            role_in_agency=AgencyRole.AGENT,
+    # Add to agency if agent
+    if invitation["role"] == "agent" and invitation.get("agency_id"):
+        await db.agencies.update_one(
+            {"_id": invitation["agency_id"]},
+            {"$push": {"members": {
+                "user_id": user_id,
+                "role_in_agency": "agent",
+                "joined_at": now,
+            }}},
         )
-        db.add(ua)
 
-    invitation.used_at = datetime.now(timezone.utc)
-    await db.flush()
+    # Mark invitation used
+    await db.invitation_tokens.update_one(
+        {"_id": invitation["_id"]}, {"$set": {"used_at": now}}
+    )
 
-    # Reload user with relationships
-    result = await db.execute(select(User).where(User.id == user.id))
-    user = result.scalar_one()
+    # Reload user for response
+    user = await _reload_user(db, user_id)
 
     access, refresh = await _create_token_pair(db, user, ip_address, user_agent_str)
 
     await log_action(
         db, AuthAction.INVITATION_USED,
-        user_id=str(user.id), email=user.email,
+        user_id=str(user_id), email=user["email"],
         ip_address=ip_address, user_agent=user_agent_str,
-        metadata={"invited_by": str(invitation.invited_by), "role": invitation.role.value},
+        metadata={"invited_by": str(invitation["invited_by"]), "role": invitation["role"]},
     )
     await log_action(
         db, AuthAction.SIGNUP,
-        user_id=str(user.id), email=user.email,
+        user_id=str(user_id), email=user["email"],
         ip_address=ip_address, user_agent=user_agent_str,
-        metadata={"role": invitation.role.value, "via": "invitation"},
+        metadata={"role": invitation["role"], "via": "invitation"},
     )
 
     return _build_token_response(user, access, refresh)
@@ -664,8 +697,8 @@ async def signup_invited(
 # ── Profile ──────────────────────────────────────────────────────────
 
 async def complete_profile(
-    db: AsyncSession,
-    user: User,
+    db: AsyncIOMotorDatabase,
+    user: dict,
     first_name: str,
     last_name: str,
     phone: str | None = None,
@@ -674,50 +707,57 @@ async def complete_profile(
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
-    if user.profile_completed:
+    if user.get("profile_completed"):
         raise ValidationError("Profile has already been completed")
 
-    if user.role == UserRole.IMPORTER and not company_name:
+    user_role = user["role"]
+    if user_role == "importer" and not company_name:
         raise ValidationError("company_name is required for importers")
 
-    if user.role == UserRole.AGENCY_MANAGER:
+    if user_role == "agency_manager":
         if not agency_id:
             raise ValidationError("agency_id is required for agency managers")
-        result = await db.execute(select(Agency).where(Agency.id == agency_id))
-        agency = result.scalar_one_or_none()
+        try:
+            agency_oid = ObjectId(agency_id)
+        except Exception:
+            raise NotFoundError("Agency not found")
+        agency = await db.agencies.find_one({"_id": agency_oid})
         if not agency:
             raise NotFoundError("Agency not found")
-        if not agency.is_active:
+        if not agency.get("is_active"):
             raise ValidationError("Agency has been deactivated")
 
-    profile = UserProfile(
-        user_id=user.id,
-        first_name=first_name,
-        last_name=last_name,
-        phone=phone,
-        company_name=company_name if user.role == UserRole.IMPORTER else None,
-        metadata_={},
+    now = datetime.now(timezone.utc)
+    profile_data = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "phone": phone,
+        "company_name": company_name if user_role == "importer" else None,
+        "avatar_url": None,
+        "metadata": {},
+    }
+
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"profile": profile_data, "profile_completed": True, "updated_at": now}},
     )
-    db.add(profile)
 
-    if user.role == UserRole.AGENCY_MANAGER and agency_id:
-        ua = UserAgency(
-            user_id=user.id,
-            agency_id=agency_id,
-            role_in_agency=AgencyRole.MANAGER,
+    if user_role == "agency_manager" and agency_id:
+        agency_oid = ObjectId(agency_id)
+        await db.agencies.update_one(
+            {"_id": agency_oid},
+            {"$push": {"members": {
+                "user_id": user["_id"],
+                "role_in_agency": "manager",
+                "joined_at": now,
+            }}},
         )
-        db.add(ua)
 
-    user.profile_completed = True
-    await db.flush()
-
-    # Reload
-    result = await db.execute(select(User).where(User.id == user.id))
-    user = result.scalar_one()
+    user = await _reload_user(db, user["_id"])
 
     await log_action(
         db, AuthAction.PROFILE_UPDATED,
-        user_id=str(user.id), email=user.email,
+        user_id=str(user["_id"]), email=user["email"],
         ip_address=ip_address, user_agent=user_agent_str,
         metadata={"fields_set": ["first_name", "last_name", "phone", "company_name" if company_name else None]},
     )
@@ -725,37 +765,43 @@ async def complete_profile(
     return {"message": "Profile completed successfully", "user": _build_user_response(user)}
 
 
-async def get_profile(db: AsyncSession, user: User) -> dict:
+async def get_profile(db: AsyncIOMotorDatabase, user: dict) -> dict:
+    user = await _reload_user(db, user["_id"])
     return _build_user_response(user)
 
 
 async def update_profile(
-    db: AsyncSession,
-    user: User,
+    db: AsyncIOMotorDatabase,
+    user: dict,
     data: dict,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
-    if not user.profile:
+    if not user.get("profile"):
         raise NotFoundError("Profile not found")
 
     changed = []
+    update_fields = {}
     for field in ("first_name", "last_name", "phone", "company_name"):
         if field in data and data[field] is not None:
-            setattr(user.profile, field, data[field])
+            update_fields[f"profile.{field}"] = data[field]
             changed.append(field)
 
-    await db.flush()
+    if update_fields:
+        update_fields["updated_at"] = datetime.now(timezone.utc)
+        await db.users.update_one({"_id": user["_id"]}, {"$set": update_fields})
 
-    result = await db.execute(select(User).where(User.id == user.id))
-    user = result.scalar_one()
+    user = await _reload_user(db, user["_id"])
 
     await log_action(
         db, AuthAction.PROFILE_UPDATED,
-        user_id=str(user.id), email=user.email,
+        user_id=str(user["_id"]), email=user["email"],
         ip_address=ip_address, user_agent=user_agent_str,
         metadata={"fields_changed": changed},
     )
+
+    from src.services.notification_triggers import on_profile_updated
+    await on_profile_updated(db, user["_id"])
 
     return {"message": "Profile updated", "user": _build_user_response(user)}
 
@@ -763,38 +809,35 @@ async def update_profile(
 # ── Password Management ─────────────────────────────────────────────
 
 async def forgot_password(
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
     email: str,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
     user = await _get_user_by_email(db, email)
 
-    if user and user.is_active and user.is_email_verified:
+    if user and user.get("is_active") and user.get("is_email_verified"):
+        now = datetime.now(timezone.utc)
         # Invalidate existing tokens
-        await db.execute(
-            update(PasswordResetToken)
-            .where(
-                PasswordResetToken.user_id == user.id,
-                PasswordResetToken.used_at.is_(None),
-            )
-            .values(used_at=datetime.now(timezone.utc))
+        await db.password_reset_tokens.update_many(
+            {"user_id": user["_id"], "used_at": None},
+            {"$set": {"used_at": now}},
         )
 
         raw_token = generate_token()
-        prt = PasswordResetToken(
-            user_id=user.id,
-            token_hash=hash_token(raw_token),
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-        )
-        db.add(prt)
-        await db.flush()
+        await db.password_reset_tokens.insert_one({
+            "user_id": user["_id"],
+            "token_hash": hash_token(raw_token),
+            "expires_at": now + timedelta(hours=1),
+            "used_at": None,
+            "created_at": now,
+        })
 
         await email_service.send_password_reset_email(email, raw_token)
 
         await log_action(
             db, AuthAction.PASSWORD_RESET_REQUESTED,
-            user_id=str(user.id), email=email,
+            user_id=str(user["_id"]), email=email,
             ip_address=ip_address, user_agent=user_agent_str,
         )
 
@@ -802,66 +845,70 @@ async def forgot_password(
 
 
 async def reset_password(
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
     token: str,
     new_password: str,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
     token_hash = hash_token(token)
-    result = await db.execute(
-        select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
-    )
-    prt = result.scalar_one_or_none()
+    prt = await db.password_reset_tokens.find_one({"token_hash": token_hash})
 
     if not prt:
         raise ValidationError("Invalid or expired reset token")
-    if prt.used_at:
+    if prt.get("used_at"):
         raise ValidationError("Token has already been used")
-    if prt.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+    if prt["expires_at"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise ValidationError("Reset token has expired. Please request a new one.")
 
     violations = validate_password_strength(new_password)
     if violations:
         raise ValidationError("Password does not meet requirements", details=violations)
 
-    result = await db.execute(select(User).where(User.id == prt.user_id))
-    user = result.scalar_one_or_none()
-    if not user or not user.is_active:
+    user = await db.users.find_one({"_id": prt["user_id"]})
+    if not user or not user.get("is_active"):
         raise ValidationError("Account not found or deactivated")
 
-    user.password_hash = hash_password(new_password)
-    user.failed_login_count = 0
-    user.locked_until = None
-    prt.used_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {
+            "password_hash": hash_password(new_password),
+            "failed_login_count": 0,
+            "locked_until": None,
+            "updated_at": now,
+        }},
+    )
+
+    await db.password_reset_tokens.update_one(
+        {"_id": prt["_id"]}, {"$set": {"used_at": now}}
+    )
 
     # Revoke all refresh tokens
-    now = datetime.now(timezone.utc)
-    revoke_result = await db.execute(
-        update(RefreshToken)
-        .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
-        .values(revoked_at=now)
+    revoke_result = await db.refresh_tokens.update_many(
+        {"user_id": user["_id"], "revoked_at": None},
+        {"$set": {"revoked_at": now}},
     )
 
     await log_action(
         db, AuthAction.PASSWORD_RESET,
-        user_id=str(user.id), email=user.email,
+        user_id=str(user["_id"]), email=user["email"],
         ip_address=ip_address, user_agent=user_agent_str,
-        metadata={"sessions_revoked": revoke_result.rowcount},
+        metadata={"sessions_revoked": revoke_result.modified_count},
     )
 
     return {"message": "Password has been reset successfully. Please log in with your new password."}
 
 
 async def change_password(
-    db: AsyncSession,
-    user: User,
+    db: AsyncIOMotorDatabase,
+    user: dict,
     current_password: str,
     new_password: str,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
-    if not verify_password(current_password, user.password_hash):
+    if not verify_password(current_password, user["password_hash"]):
         raise AuthenticationError("Current password is incorrect")
 
     if current_password == new_password:
@@ -871,27 +918,31 @@ async def change_password(
     if violations:
         raise ValidationError("Password does not meet requirements", details=violations)
 
-    user.password_hash = hash_password(new_password)
-
-    # Revoke all refresh tokens
     now = datetime.now(timezone.utc)
-    revoke_result = await db.execute(
-        update(RefreshToken)
-        .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
-        .values(revoked_at=now)
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"password_hash": hash_password(new_password), "updated_at": now}},
     )
 
-    await db.flush()
+    # Revoke all refresh tokens
+    revoke_result = await db.refresh_tokens.update_many(
+        {"user_id": user["_id"], "revoked_at": None},
+        {"$set": {"revoked_at": now}},
+    )
 
     # Issue new tokens for current session
+    user = await _reload_user(db, user["_id"])
     access, refresh = await _create_token_pair(db, user, ip_address, user_agent_str)
 
     await log_action(
         db, AuthAction.PASSWORD_CHANGED,
-        user_id=str(user.id), email=user.email,
+        user_id=str(user["_id"]), email=user["email"],
         ip_address=ip_address, user_agent=user_agent_str,
-        metadata={"other_sessions_revoked": revoke_result.rowcount},
+        metadata={"other_sessions_revoked": revoke_result.modified_count},
     )
+
+    from src.services.notification_triggers import on_password_changed
+    await on_password_changed(db, user["_id"])
 
     return {
         "message": "Password changed successfully. Other sessions have been logged out.",
