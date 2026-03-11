@@ -75,7 +75,7 @@ async def list_agencies(
 
     if user["role"] == "agency_manager":
         query["members.user_id"] = user["_id"]
-    elif user["role"] not in ("admin", "government"):
+    elif user["role"] not in ("admin", "government_rra", "government_rsb"):
         raise AuthorizationError("No permission to list agencies")
 
     if search:
