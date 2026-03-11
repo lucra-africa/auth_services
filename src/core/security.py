@@ -63,35 +63,45 @@ _public_key_cache: bytes | None = None
 def _load_private_key() -> bytes:
     global _private_key_cache
     if _private_key_cache is None:
-        from pathlib import Path
-        key_path = Path(settings.jwt_private_key_path)
-        if not key_path.is_absolute():
-            key_path = Path(__file__).resolve().parent.parent.parent / key_path
-        _private_key_cache = key_path.read_bytes()
+        # Prefer env var (for platforms like Render with ephemeral filesystem)
+        if settings.jwt_private_key:
+            key = settings.jwt_private_key.replace("\\n", "\n")
+            _private_key_cache = key.encode()
+        else:
+            from pathlib import Path
+            key_path = Path(settings.jwt_private_key_path)
+            if not key_path.is_absolute():
+                key_path = Path(__file__).resolve().parent.parent.parent / key_path
+            _private_key_cache = key_path.read_bytes()
     return _private_key_cache
 
 
 def _load_public_key() -> bytes:
     global _public_key_cache
     if _public_key_cache is None:
-        from pathlib import Path
-        key_path = Path(settings.jwt_public_key_path)
-        if not key_path.is_absolute():
-            key_path = Path(__file__).resolve().parent.parent.parent / key_path
-        _public_key_cache = key_path.read_bytes()
+        # Prefer env var (for platforms like Render with ephemeral filesystem)
+        if settings.jwt_public_key:
+            key = settings.jwt_public_key.replace("\\n", "\n")
+            _public_key_cache = key.encode()
+        else:
+            from pathlib import Path
+            key_path = Path(settings.jwt_public_key_path)
+            if not key_path.is_absolute():
+                key_path = Path(__file__).resolve().parent.parent.parent / key_path
+            _public_key_cache = key_path.read_bytes()
     return _public_key_cache
 
 
 def _get_signing_key_and_algorithm() -> tuple:
     """Return (key, algorithm) for signing JWT tokens."""
-    if settings.jwt_private_key_path:
+    if settings.jwt_private_key or settings.jwt_private_key_path:
         return _load_private_key(), "RS256"
     return settings.jwt_secret_key, "HS256"
 
 
 def _get_verification_key_and_algorithms() -> tuple:
     """Return (key, algorithms_list) for verifying JWT tokens."""
-    if settings.jwt_public_key_path:
+    if settings.jwt_public_key or settings.jwt_public_key_path:
         return _load_public_key(), ["RS256"]
     return settings.jwt_secret_key, ["HS256"]
 

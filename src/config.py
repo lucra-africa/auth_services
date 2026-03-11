@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "RS256"
     jwt_private_key_path: str = ""
     jwt_public_key_path: str = ""
+    jwt_private_key: str = ""  # PEM content directly (for platforms without persistent filesystem)
+    jwt_public_key: str = ""   # PEM content directly
     jwt_access_token_expire_minutes: int = 15
     jwt_refresh_token_expire_days: int = 7
 

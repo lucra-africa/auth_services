@@ -1,0 +1,56 @@
+# Render Blueprint — Poruta Auth Service
+# https://docs.render.com/blueprint-spec
+services:
+  - type: web
+    name: poruta-auth
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: frankfurt  # eu-central
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: MONGO_URI
+        sync: false  # set manually in dashboard
+      - key: MONGO_DB
+        value: poruta_auth
+      - key: JWT_ALGORITHM
+        value: RS256
+      - key: JWT_PRIVATE_KEY
+        sync: false  # set manually — paste PEM content
+      - key: JWT_PUBLIC_KEY
+        sync: false  # set manually — paste PEM content
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "15"
+      - key: JWT_REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: SMTP_HOST
+        value: smtp.zoho.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USE_SSL
+        value: "true"
+      - key: SMTP_USERNAME
+        value: support@poruta.com
+      - key: SMTP_PASSWORD
+        sync: false  # set manually
+      - key: SMTP_FROM_EMAIL
+        value: support@poruta.com
+      - key: SMTP_FROM_NAME
+        value: Poruta
+      - key: FRONTEND_URL
+        value: https://app.poruta.com
+      - key: CORS_ORIGINS
+        value: https://app.poruta.com,https://poruta.com,https://amusanga.monitys.com
+      - key: ADMIN_EMAIL
+        value: descartes.tuyishime@poruta.com
+      - key: ADMIN_PASSWORD
+        sync: false  # set manually
+      - key: SERVICE_API_KEY
+        generateValue: true
