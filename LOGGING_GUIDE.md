@@ -29,9 +29,9 @@ After processing, you'll see:
 
 ```
 2026-03-09 08:57:08,637 | INFO     | src.main | Starting Poruta Auth Service
-2026-03-09 08:57:08,736 | INFO     | src.main | Auth service ready on port 5000
+2026-03-09 08:57:08,736 | INFO     | src.main | Auth service ready on port 8050
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+INFO:     Uvicorn running on http://0.0.0.0:8050 (Press CTRL+C to quit)
 
 2026-03-09 09:05:12,123 | INFO     | src.main | → POST /api/auth/register
 2026-03-09 09:05:12,145 | INFO     | src.main | ← ✓ POST /api/auth/register [201] 22.45ms (from 192.168.1.100)
@@ -117,15 +117,15 @@ Try these commands to see the logs in action:
 
 ```powershell
 # Health check
-curl http://localhost:5000/health
+curl http://localhost:8050/health
 
 # Register a user
-curl -X POST http://localhost:5000/api/auth/register `
+curl -X POST http://localhost:8050/api/auth/register `
   -H "Content-Type: application/json" `
   -d '{"email":"test@example.com","password":"Test123!@#"}'
 
 # Login
-curl -X POST http://localhost:5000/api/auth/login `
+curl -X POST http://localhost:8050/api/auth/login `
   -H "Content-Type: application/json" `
   -d '{"email":"test@example.com","password":"Test123!@#"}'
 ```
