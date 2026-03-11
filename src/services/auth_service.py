@@ -33,8 +33,9 @@ logger = logging.getLogger(__name__)
 
 INVITATION_PERMISSIONS: dict[str, list[str]] = {
     "agency_manager": ["agent"],
-    "government": ["inspector"],
-    "admin": ["importer", "agent", "agency_manager", "inspector", "government"],
+    "government_rra": ["government_rra"],
+    "government_rsb": ["government_rsb"],
+    "admin": ["importer", "agent", "agency_manager", "inspector", "government_rra", "government_rsb"],
 }
 
 
@@ -49,8 +50,10 @@ def _build_user_response(user: dict) -> dict:
             "first_name": profile.get("first_name"),
             "last_name": profile.get("last_name"),
             "phone": profile.get("phone"),
+            "phone_number": profile.get("phone_number"),
             "company_name": profile.get("company_name"),
             "avatar_url": profile.get("avatar_url"),
+            "address": profile.get("address"),
             "metadata": profile.get("metadata", {}),
         }
 
@@ -69,6 +72,8 @@ def _build_user_response(user: dict) -> dict:
         "role": user["role"],
         "is_email_verified": user.get("is_email_verified", False),
         "profile_completed": user.get("profile_completed", False),
+        "phone_number": user.get("phone_number"),
+        "address": user.get("address"),
         "profile": profile_data,
         "agency": agency_data,
     }
@@ -135,6 +140,8 @@ async def signup(
     email: str,
     password: str,
     role: str,
+    phone_number: str | None = None,
+    address: dict | None = None,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
@@ -155,6 +162,8 @@ async def signup(
         "is_active": True,
         "profile_completed": False,
         "profile": None,
+        "phone_number": phone_number,
+        "address": address,
         "failed_login_count": 0,
         "locked_until": None,
         "last_login_at": None,
@@ -611,6 +620,8 @@ async def signup_invited(
     first_name: str,
     last_name: str,
     phone: str | None = None,
+    phone_number: str | None = None,
+    address: dict | None = None,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
@@ -644,10 +655,13 @@ async def signup_invited(
             "first_name": first_name,
             "last_name": last_name,
             "phone": phone,
+            "phone_number": phone_number,
             "company_name": None,
             "avatar_url": None,
             "metadata": {},
         },
+        "phone_number": phone_number or phone,
+        "address": address,
         "failed_login_count": 0,
         "locked_until": None,
         "last_login_at": None,
@@ -702,8 +716,10 @@ async def complete_profile(
     first_name: str,
     last_name: str,
     phone: str | None = None,
+    phone_number: str | None = None,
     company_name: str | None = None,
     agency_id: str | None = None,
+    address: dict | None = None,
     ip_address: str | None = None,
     user_agent_str: str | None = None,
 ) -> dict:
@@ -732,6 +748,7 @@ async def complete_profile(
         "first_name": first_name,
         "last_name": last_name,
         "phone": phone,
+        "phone_number": phone_number,
         "company_name": company_name if user_role == "importer" else None,
         "avatar_url": None,
         "metadata": {},
@@ -739,7 +756,13 @@ async def complete_profile(
 
     await db.users.update_one(
         {"_id": user["_id"]},
-        {"$set": {"profile": profile_data, "profile_completed": True, "updated_at": now}},
+        {"$set": {
+            "profile": profile_data,
+            "profile_completed": True,
+            "phone_number": phone_number or phone,
+            "address": address,
+            "updated_at": now,
+        }},
     )
 
     if user_role == "agency_manager" and agency_id:
@@ -782,10 +805,21 @@ async def update_profile(
 
     changed = []
     update_fields = {}
-    for field in ("first_name", "last_name", "phone", "company_name"):
+    for field in ("first_name", "last_name", "phone", "phone_number", "company_name"):
         if field in data and data[field] is not None:
             update_fields[f"profile.{field}"] = data[field]
             changed.append(field)
+
+    # Handle address as a nested object
+    if "address" in data and data["address"] is not None:
+        addr = data["address"]
+        if isinstance(addr, dict):
+            update_fields["address"] = addr
+            changed.append("address")
+
+    # Sync phone_number to top-level field
+    if "phone_number" in data and data["phone_number"] is not None:
+        update_fields["phone_number"] = data["phone_number"]
 
     if update_fields:
         update_fields["updated_at"] = datetime.now(timezone.utc)
