@@ -17,7 +17,7 @@ from src.core import (
     NotFoundError,
     ValidationError,
 )
-from src.database import close_database, get_db, init_database
+from src.db.mongo import close_database, get_db, init_database
 from src.api.router import api_router
 
 logging.basicConfig(
@@ -35,10 +35,8 @@ async def lifespan(app: FastAPI):
     # Auto-seed admin
     from src.services.admin_service import seed_admin
 
-    async for db in get_db():
-        await seed_admin(db)
-        await db.commit()
-        break
+    db = get_db()
+    await seed_admin(db)
 
     logger.info("Auth service ready on port %s", settings.app_port)
     yield
