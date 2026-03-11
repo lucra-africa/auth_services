@@ -1,13 +1,22 @@
 import re
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator
+
+
+class AddressSchema(BaseModel):
+    street: str | None = None
+    city: str | None = None
+    province: str | None = None
+    country: str | None = None
 
 
 class SignupRequest(BaseModel):
     email: str
     password: str
     role: Literal["importer", "agency_manager"]
+    phone_number: str | None = None
+    address: AddressSchema | None = None
 
     @field_validator("email")
     @classmethod
@@ -47,7 +56,7 @@ class RefreshRequest(BaseModel):
 
 class InviteRequest(BaseModel):
     email: str
-    role: Literal["importer", "agent", "agency_manager", "inspector", "government"]
+    role: Literal["importer", "agent", "agency_manager", "inspector", "government_rra", "government_rsb"]
     agency_id: str | None = None
 
     @field_validator("email")
@@ -62,6 +71,8 @@ class InvitedSignupRequest(BaseModel):
     first_name: str
     last_name: str
     phone: str | None = None
+    phone_number: str | None = None
+    address: AddressSchema | None = None
 
 
 class ForgotPasswordRequest(BaseModel):
