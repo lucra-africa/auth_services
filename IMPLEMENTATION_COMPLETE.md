@@ -147,7 +147,7 @@ mailhog
 cd "c:\Users\Admin\OneDrive\Desktop\Poruta\auth_services"
 # Edit .env with MailHog settings
 $env:PYTHONPATH = (Get-Location).Path
-python -m uvicorn src.main:app --host 0.0.0.0 --port 5000 --reload
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8050 --reload
 
 # Browser: View emails
 # Open http://localhost:8025
