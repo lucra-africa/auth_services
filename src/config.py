@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # Database — MongoDB
     mongo_uri: str = "mongodb://localhost:27017"
+    mongo_uri_fallback: str = ""
     mongo_db: str = "poruta_auth"
 
     # MinIO
@@ -26,7 +27,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "RS256"
     jwt_private_key_path: str = ""
     jwt_public_key_path: str = ""
-    jwt_access_token_expire_minutes: int = 30
+    jwt_access_token_expire_minutes: int = 15
     jwt_refresh_token_expire_days: int = 7
 
     # SMTP — Zoho Mail (SSL/TLS on port 465)
