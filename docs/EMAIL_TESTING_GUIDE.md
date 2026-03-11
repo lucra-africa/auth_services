@@ -125,7 +125,7 @@ setSuccess(result.message); // Shows "Check your email" message
 # Start it again
 cd "c:\Users\Admin\OneDrive\Desktop\Poruta\auth_services"
 $env:PYTHONPATH = (Get-Location).Path
-python -m uvicorn src.main:app --host 0.0.0.0 --port 5000 --reload
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8050 --reload
 ```
 
 ### Step 6: Test the Flow
