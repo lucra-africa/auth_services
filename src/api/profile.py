@@ -1,10 +1,10 @@
 """Profile API routes."""
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.core.dependencies import get_current_user, get_current_verified_user
-from src.database import get_db
+from src.db.mongo import get_db
 from src.schemas.user import ProfileCompleteRequest, ProfileUpdateRequest
 from src.services import auth_service
 from src.services.log_service import get_client_ip
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/profile", tags=["profile"])
 async def complete_profile(
     body: ProfileCompleteRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     return await auth_service.complete_profile(
@@ -34,7 +34,7 @@ async def complete_profile(
 
 @router.get("/me")
 async def get_profile(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_user),
 ):
     return await auth_service.get_profile(db, user=user)
@@ -44,7 +44,7 @@ async def get_profile(
 async def update_profile(
     body: ProfileUpdateRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     data = body.model_dump(exclude_unset=True)
