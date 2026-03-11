@@ -678,3 +678,261 @@ Revokes all user's active sessions.
   "exp": 1709900900
 }
 ```
+
+---
+
+## Messaging Endpoints
+
+### POST /messaging/threads
+
+Create a new conversation thread.
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user) |
+
+**Request:**
+```json
+{
+  "thread_type": "declaration",
+  "subject": "Missing chassis numbers",
+  "declaration_id": "DCL-8820",
+  "declaration_name": "Toyota Hilux (x2)",
+  "participant_ids": ["uuid-of-other-user"]
+}
+```
+
+| Field | Type | Rules |
+|-------|------|-------|
+| `thread_type` | string | Required, one of: `declaration`, `direct`, `inspection` |
+| `subject` | string | Optional |
+| `declaration_id` | string | Optional, for declaration threads |
+| `declaration_name` | string | Optional, for declaration threads |
+| `participant_ids` | string[] | Required, list of user UUIDs (creator is added automatically) |
+
+**Response (201):** Thread object with participants and empty messages.
+
+---
+
+### GET /messaging/threads
+
+List threads for the current user (paginated).
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user) |
+
+**Query Params:** `page` (default 1), `page_size` (default 20)
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "id": "thread-uuid",
+      "thread_type": "declaration",
+      "subject": "Missing chassis numbers",
+      "declaration_id": "DCL-8820",
+      "declaration_name": "Toyota Hilux (x2)",
+      "is_closed": false,
+      "last_message": "Uploading now.",
+      "last_message_at": "2026-03-10T10:15:00Z",
+      "unread_count": 2,
+      "participants": [...],
+      "created_at": "2026-03-10T09:00:00Z",
+      "updated_at": "2026-03-10T10:15:00Z"
+    }
+  ],
+  "total": 5,
+  "page": 1,
+  "page_size": 20,
+  "pages": 1
+}
+```
+
+---
+
+### GET /messaging/threads/{id}
+
+Get thread details with all messages. Marks thread as read for the caller.
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user, must be participant) |
+
+**Response (200):** Thread object with full `messages` array and `participants`.
+
+---
+
+### POST /messaging/threads/{id}/messages
+
+Send a message in a thread.
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user, must be participant) |
+
+**Request:**
+```json
+{
+  "content": "Here's the revised packing list.",
+  "message_type": "text",
+  "file_url": null,
+  "file_name": null
+}
+```
+
+**Response (201):** Message object.
+
+---
+
+### POST /messaging/threads/{id}/read
+
+Mark a thread as read for the current user.
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user, must be participant) |
+
+**Response (200):** `{ "message": "Thread marked as read" }`
+
+---
+
+### WebSocket /messaging/ws?token={jwt}
+
+Real-time messaging via WebSocket. Authenticate by passing JWT in `token` query parameter.
+
+**Send:**
+```json
+{ "action": "send_message", "thread_id": "uuid", "content": "Hello" }
+{ "action": "mark_read", "thread_id": "uuid" }
+{ "action": "ping" }
+```
+
+**Receive:**
+```json
+{ "type": "new_message", "thread_id": "uuid", "message": {...} }
+{ "type": "message_sent", "thread_id": "uuid", "message": {...} }
+{ "type": "thread_read", "thread_id": "uuid" }
+{ "type": "pong" }
+{ "type": "error", "message": "..." }
+```
+
+---
+
+## Notification Endpoints
+
+### GET /notifications
+
+List notifications for the current user (paginated).
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user) |
+
+**Query Params:** `page` (default 1), `page_size` (default 20), `unread_only` (boolean)
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "id": "notif-uuid",
+      "title": "Welcome to Poruta!",
+      "message": "Your account has been created.",
+      "notification_type": "success",
+      "read": false,
+      "action_url": null,
+      "created_at": "2026-03-10T09:00:00Z"
+    }
+  ],
+  "total": 3,
+  "unread_count": 2,
+  "page": 1,
+  "page_size": 20,
+  "pages": 1
+}
+```
+
+---
+
+### GET /notifications/unread-count
+
+Get the count of unread notifications.
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user) |
+
+**Response (200):** `{ "unread_count": 5 }`
+
+---
+
+### POST /notifications/{id}/read
+
+Mark a single notification as read.
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user, must own notification) |
+
+**Response (200):** `{ "message": "Notification marked as read" }`
+
+---
+
+### POST /notifications/mark-all-read
+
+Mark all notifications as read for the current user.
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user) |
+
+**Response (200):** `{ "message": "All notifications marked as read" }`
+
+---
+
+### DELETE /notifications/{id}
+
+Delete a single notification.
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user, must own notification) |
+
+**Response (200):** `{ "message": "Notification deleted" }`
+
+---
+
+### DELETE /notifications
+
+Clear all notifications for the current user.
+
+| | |
+|---|---|
+| **Auth** | Bearer token (verified user) |
+
+**Response (200):** `{ "message": "All notifications cleared" }`
+
+---
+
+### POST /notifications/push
+
+Push a notification from an external service (e.g., poruta-backend).
+
+| | |
+|---|---|
+| **Auth** | `X-API-Key` header matching `NOTIFICATION_API_KEY` env var |
+
+**Request:**
+```json
+{
+  "user_id": "target-user-uuid",
+  "title": "Document Processed",
+  "message": "Your invoice has been OCR-processed.",
+  "notification_type": "info",
+  "action_url": "/ocr-review"
+}
+```
+
+**Response (201):** Notification object.
