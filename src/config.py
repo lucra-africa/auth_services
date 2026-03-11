@@ -11,20 +11,28 @@ class Settings(BaseSettings):
     app_port: int = 5000
     app_debug: bool = True
 
-    # Database
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/poruta_auth"
+    # Database — MongoDB
+    mongo_uri: str = "mongodb://localhost:27017"
+    mongo_db: str = "poruta_auth"
+
+    # MinIO
+    minio_endpoint: str = "http://localhost:9002"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_chat_bucket: str = "chat-attachments"
 
     # JWT
     jwt_secret_key: str = "1HEeHN81HTCSVYnzv4hIPgTTiBLXU3V7VoMuX351KS7"
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
 
-    # SMTP
+    # SMTP — Zoho Mail (SSL/TLS on port 465)
     smtp_host: str = "smtp.zoho.com"
-    smtp_port: int = 587
-    smtp_username: str = ""
+    smtp_port: int = 465
+    smtp_use_ssl: bool = True
+    smtp_username: str = "support@poruta.com"
     smtp_password: str = ""
-    smtp_from_email: str = "noreply@poruta.com"
+    smtp_from_email: str = "support@poruta.com"
     smtp_from_name: str = "Poruta"
 
     # Frontend
@@ -36,6 +44,9 @@ class Settings(BaseSettings):
 
     # CORS
     cors_origins: str = "http://localhost:9000,http://localhost:3000"
+
+    # Notification push API key (for external services like poruta-backend)
+    notification_api_key: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:
