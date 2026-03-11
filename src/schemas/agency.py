@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel
 
 
@@ -20,18 +18,16 @@ class AgencyUpdateRequest(BaseModel):
 
 
 class AgencyMemberResponse(BaseModel):
-    user_id: UUID
+    user_id: str
     email: str
     first_name: str | None = None
     last_name: str | None = None
     role_in_agency: str
     joined_at: str
 
-    model_config = {"from_attributes": True}
-
 
 class AgencyResponse(BaseModel):
-    id: UUID
+    id: str
     name: str
     registration_number: str
     address: str | None = None
@@ -40,8 +36,6 @@ class AgencyResponse(BaseModel):
     is_active: bool
     created_at: str
     member_count: int = 0
-
-    model_config = {"from_attributes": True}
 
 
 class AgencyDetailResponse(AgencyResponse):

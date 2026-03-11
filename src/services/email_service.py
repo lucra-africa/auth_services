@@ -81,8 +81,9 @@ def _build_password_reset_email_html(reset_url: str) -> str:
 
 ROLE_LABELS = {
     "agent": "Customs Agent",
-    "inspector": "Customs Inspector",
-    "government": "Government Official",
+    "inspector": "Warehouse Inspector",
+    "government_rra": "RRA Official",
+    "government_rsb": "RSB Official",
     "agency_manager": "Agency Manager",
 }
 
@@ -95,10 +96,15 @@ def _send_smtp(to: str, subject: str, html_body: str) -> None:
     msg["Subject"] = subject
     msg.attach(MIMEText(html_body, "html"))
 
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-        server.starttls()
-        server.login(settings.smtp_username, settings.smtp_password)
-        server.send_message(msg)
+    if settings.smtp_use_ssl:
+        with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port) as server:
+            server.login(settings.smtp_username, settings.smtp_password)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
+            server.starttls()
+            server.login(settings.smtp_username, settings.smtp_password)
+            server.send_message(msg)
 
 
 async def _send_email(to: str, subject: str, html_body: str) -> None:

@@ -1,10 +1,10 @@
 """Agency management API routes."""
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.core.dependencies import get_current_verified_user
-from src.database import get_db
+from src.db.mongo import get_db
 from src.schemas.agency import AgencyCreateRequest, AgencyUpdateRequest
 from src.services import agency_service
 from src.services.log_service import get_client_ip
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/agencies", tags=["agencies"])
 async def create_agency(
     body: AgencyCreateRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     return await agency_service.create_agency(
@@ -38,7 +38,7 @@ async def list_agencies(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     search: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     return await agency_service.list_agencies(
@@ -49,7 +49,7 @@ async def list_agencies(
 @router.get("/{agency_id}")
 async def get_agency(
     agency_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     return await agency_service.get_agency(db, user=user, agency_id=agency_id)
@@ -60,7 +60,7 @@ async def update_agency(
     agency_id: str,
     body: AgencyUpdateRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     data = body.model_dump(exclude_unset=True)

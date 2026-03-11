@@ -3,6 +3,7 @@ __pycache__/
 *$py.class
 *.so
 .env
+.env.production.example
 .venv/
 venv/
 env/
@@ -14,3 +15,13 @@ build/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+keys/
+
+# Not needed on Render — dev/docs only
+docs/
+plan/
+scripts/
+docker-compose.yml
+IMPLEMENTATION_COMPLETE.md
+QUICK_REFERENCE.md
+LOGGING_GUIDE.md

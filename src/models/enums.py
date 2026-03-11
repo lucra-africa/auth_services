@@ -6,7 +6,8 @@ class UserRole(str, enum.Enum):
     AGENT = "agent"
     AGENCY_MANAGER = "agency_manager"
     INSPECTOR = "inspector"
-    GOVERNMENT = "government"
+    GOVERNMENT_RRA = "government_rra"
+    GOVERNMENT_RSB = "government_rsb"
     ADMIN = "admin"
 
 
@@ -34,3 +35,5 @@ class AuthAction(str, enum.Enum):
     TOKEN_REFRESH = "TOKEN_REFRESH"
     ADMIN_CREATED = "ADMIN_CREATED"
     AGENCY_CREATED = "AGENCY_CREATED"
+    SHADOW_START = "SHADOW_START"
+    SHADOW_END = "SHADOW_END"
