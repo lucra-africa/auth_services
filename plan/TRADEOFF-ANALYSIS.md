@@ -351,7 +351,7 @@ poruta-backend is an ML/OCR service with heavy dependencies (PyTorch, PaddlePadd
 
 The separate service means auth_services is a ~5MB Docker image (Python + FastAPI + asyncpg + argon2). poruta-backend is a ~10GB image (CUDA + PyTorch). Different scaling profiles, different failure domains.
 
-**Third-party impact**: The frontend needs to know the auth service URL (one env variable: `NEXT_PUBLIC_AUTH_URL`). No API gateway needed — the frontend talks directly to auth_services on port 5000 and poruta-backend on port 8000.
+**Third-party impact**: The frontend needs to know the auth service URL (one env variable: `NEXT_PUBLIC_AUTH_URL`). No API gateway needed — the frontend talks directly to auth_services on port 8050 and poruta-backend on port 8000.
 
 ---
 
