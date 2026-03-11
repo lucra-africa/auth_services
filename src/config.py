@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     # App
     app_name: str = "poruta-auth"
     app_env: str = "development"
-    app_port: int = 5000
+    app_port: int = 8050
     app_debug: bool = True
 
     # Database — MongoDB
@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     # JWT
     jwt_secret_key: str = "1HEeHN81HTCSVYnzv4hIPgTTiBLXU3V7VoMuX351KS7"
+    jwt_algorithm: str = "RS256"
+    jwt_private_key_path: str = ""
+    jwt_public_key_path: str = ""
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
 
@@ -47,6 +50,9 @@ class Settings(BaseSettings):
 
     # Notification push API key (for external services like poruta-backend)
     notification_api_key: str = ""
+
+    # Service-to-service API key (for poruta-backend internal calls)
+    service_api_key: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:
