@@ -6,7 +6,8 @@ class UserRole(str, enum.Enum):
     AGENT = "agent"
     AGENCY_MANAGER = "agency_manager"
     INSPECTOR = "inspector"
-    GOVERNMENT = "government"
+    GOVERNMENT_RRA = "government_rra"
+    GOVERNMENT_RSB = "government_rsb"
     ADMIN = "admin"
 
 
