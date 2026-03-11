@@ -22,6 +22,24 @@ router = APIRouter(prefix="/messaging", tags=["messaging"])
 
 # ── REST endpoints ──────────────────────────────────────────────────
 
+@router.get("/contacts")
+async def get_contacts(
+    search: str | None = Query(None, max_length=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    return await messaging_service.get_contacts(
+        db,
+        caller_id=user["_id"],
+        caller_role=user.get("role", ""),
+        search=search,
+        page=page,
+        page_size=page_size,
+    )
+
+
 @router.post("/threads")
 async def create_thread(
     body: CreateThreadRequest,
