@@ -2,25 +2,26 @@
 
 ## Who is the Inspector?
 
-A customs inspector is a government-appointed official who physically inspects goods at ports and border crossings, verifies documentation against physical shipments, and approves or rejects customs declarations. Inspectors are invited by Government users — they cannot self-register.
+A warehouse inspector physically inspects goods at warehouses and border crossings, verifies documentation against physical shipments, and approves or rejects customs declarations. Maps to backend role: `STAKEHOLDER_WAREHOUSE`. Inspectors are invited by System Admins.
 
 ---
 
 ## Registration Journey
 
-### Step 0: Government User Sends Invitation
+### Step 0: Admin Sends Invitation
 
-A Government official invites the inspector:
-1. Government user logs into Poruta
-2. Goes to personnel management
-3. Enters inspector's government email
-4. Clicks "Invite Inspector"
-5. `POST /auth/invite` with `{email, role: "inspector"}`
+A System Admin invites the inspector:
+1. Admin logs into Poruta
+2. Goes to user management
+3. Enters inspector's email
+4. Selects role: "Inspector"
+5. Clicks "Send Invitation"
+6. `POST /api/v1/invitations/create` with `{email, role: "inspector"}`
 
 The inspector receives:
 ```
 Subject: You've been invited to join Poruta
-"A Government official has invited you to join Poruta as a Customs Inspector."
+"The System Administrator has invited you to join Poruta as a Warehouse Inspector."
 [Accept Invitation] → {frontend}/signup/invite?token=abc123
 "This invitation expires in 24 hours."
 ```
