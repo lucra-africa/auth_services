@@ -5,7 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.core.dependencies import get_current_verified_user
 from src.db.mongo import get_db
-from src.schemas.auth import InvitedSignupRequest, InviteRequest
+from src.schemas.auth import BulkInviteRequest, InvitedSignupRequest, InviteRequest
 from src.services import auth_service
 from src.services.log_service import get_client_ip
 
@@ -48,16 +48,73 @@ async def send_invitation(
     )
 
 
+@router.post("/bulk", status_code=201)
+async def bulk_send_invitations(
+    body: BulkInviteRequest,
+    request: Request,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user=Depends(get_current_verified_user),
+):
+    return await auth_service.bulk_send_invitations(
+        db,
+        inviter=user,
+        invitations_list=[inv.model_dump() for inv in body.invitations],
+        ip_address=get_client_ip(request),
+        user_agent_str=request.headers.get("user-agent"),
+    )
+
+
+@router.get("/stats")
+async def get_invitation_stats(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user=Depends(get_current_verified_user),
+):
+    return await auth_service.get_invitation_stats(db, user=user)
+
+
 @router.get("/list")
 async def list_invitations(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    status: str = Query(None, regex="^(pending|used|expired)$"),
+    status: str = Query(None, pattern="^(pending|used|expired|revoked)$"),
+    search: str = Query(None, min_length=1, max_length=100),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_verified_user),
 ):
     return await auth_service.list_invitations(
-        db, user=user, page=page, page_size=page_size, status=status
+        db, user=user, page=page, page_size=page_size, status=status, search=search,
+    )
+
+
+@router.post("/{invitation_id}/revoke")
+async def revoke_invitation(
+    invitation_id: str,
+    request: Request,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user=Depends(get_current_verified_user),
+):
+    return await auth_service.revoke_invitation(
+        db,
+        invitation_id=invitation_id,
+        revoker=user,
+        ip_address=get_client_ip(request),
+        user_agent_str=request.headers.get("user-agent"),
+    )
+
+
+@router.post("/{invitation_id}/resend")
+async def resend_invitation(
+    invitation_id: str,
+    request: Request,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user=Depends(get_current_verified_user),
+):
+    return await auth_service.resend_invitation(
+        db,
+        invitation_id=invitation_id,
+        resender=user,
+        ip_address=get_client_ip(request),
+        user_agent_str=request.headers.get("user-agent"),
     )
 
 
