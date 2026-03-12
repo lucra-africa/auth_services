@@ -1,5 +1,6 @@
 """Agency management business logic — MongoDB version."""
 
+import logging
 import math
 from datetime import datetime, timezone
 
@@ -9,6 +10,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from src.core import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from src.models.enums import AuthAction
 from src.services.log_service import log_action
+
+logger = logging.getLogger(__name__)
 
 
 async def create_agency(
@@ -83,7 +86,9 @@ async def list_agencies(
     if search:
         query["name"] = {"$regex": search, "$options": "i"}
 
+    logger.info("list_agencies query=%s role=%s profile_completed=%s", query, user["role"], user.get("profile_completed"))
     total = await db.agencies.count_documents(query)
+    logger.info("list_agencies total=%d", total)
 
     offset = (page - 1) * page_size
     cursor = db.agencies.find(query).sort("created_at", -1).skip(offset).limit(page_size)
