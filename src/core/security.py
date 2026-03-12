@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import re
 import secrets
 import uuid
@@ -95,14 +96,31 @@ def _load_public_key() -> bytes:
 def _get_signing_key_and_algorithm() -> tuple:
     """Return (key, algorithm) for signing JWT tokens."""
     if settings.jwt_private_key or settings.jwt_private_key_path:
-        return _load_private_key(), "RS256"
+        try:
+            key = _load_private_key()
+            # Validate key is usable before returning
+            from cryptography.hazmat.primitives.serialization import load_pem_private_key
+            load_pem_private_key(key, password=None)
+            return key, "RS256"
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "RS256 private key unusable (%s), falling back to HS256", e
+            )
     return settings.jwt_secret_key, "HS256"
 
 
 def _get_verification_key_and_algorithms() -> tuple:
     """Return (key, algorithms_list) for verifying JWT tokens."""
     if settings.jwt_public_key or settings.jwt_public_key_path:
-        return _load_public_key(), ["RS256"]
+        try:
+            key = _load_public_key()
+            from cryptography.hazmat.primitives.serialization import load_pem_public_key
+            load_pem_public_key(key)
+            return key, ["RS256"]
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "RS256 public key unusable (%s), falling back to HS256", e
+            )
     return settings.jwt_secret_key, ["HS256"]
 
 
