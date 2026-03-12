@@ -75,6 +75,19 @@ class InvitedSignupRequest(BaseModel):
     address: AddressSchema | None = None
 
 
+class BulkInviteRequest(BaseModel):
+    invitations: list[InviteRequest]
+
+    @field_validator("invitations")
+    @classmethod
+    def validate_length(cls, v: list) -> list:
+        if len(v) == 0:
+            raise ValueError("At least one invitation is required")
+        if len(v) > 20:
+            raise ValueError("Maximum 20 invitations per batch")
+        return v
+
+
 class ForgotPasswordRequest(BaseModel):
     email: str
 
