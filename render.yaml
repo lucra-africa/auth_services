@@ -4,6 +4,7 @@ services:
   - type: web
     name: poruta-auth
     runtime: python
+    pythonVersion: "3.12.3"
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn src.main:app --bind 0.0.0.0:$PORT --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 120
     region: frankfurt  # eu-central
