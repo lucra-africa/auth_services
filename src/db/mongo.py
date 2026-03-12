@@ -1,9 +1,6 @@
 """MongoDB connection with automatic failover between primary and fallback."""
 
 import logging
-from urllib.parse import parse_qsl, urlsplit
-
-import certifi
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from src.config import settings
@@ -14,22 +11,9 @@ _client: AsyncIOMotorClient | None = None
 _active_uri: str | None = None
 
 
-def _mongo_client_kwargs(uri: str) -> dict[str, object]:
-    """Build client kwargs, including CA bundle for TLS-enabled Atlas connections."""
-    options: dict[str, object] = {"serverSelectionTimeoutMS": 5000}
-    parsed = urlsplit(uri)
-    query = {key.lower(): value.lower() for key, value in parse_qsl(parsed.query)}
-    tls_enabled = parsed.scheme == "mongodb+srv" or query.get("tls") == "true" or query.get("ssl") == "true"
-
-    if tls_enabled:
-        options["tlsCAFile"] = certifi.where()
-
-    return options
-
-
 async def _try_connect(uri: str, label: str) -> AsyncIOMotorClient:
     """Attempt to connect and ping a MongoDB URI. Raises on failure."""
-    client = AsyncIOMotorClient(uri, **_mongo_client_kwargs(uri))
+    client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
     await client[settings.mongo_db].command("ping")
     logger.info("Connected to %s MongoDB: %s", label, _mask_uri(uri))
     return client
@@ -44,7 +28,7 @@ def _mask_uri(uri: str) -> str:
 def get_client() -> AsyncIOMotorClient:
     global _client
     if _client is None:
-        _client = AsyncIOMotorClient(settings.mongo_uri, **_mongo_client_kwargs(settings.mongo_uri))
+        _client = AsyncIOMotorClient(settings.mongo_uri, serverSelectionTimeoutMS=5000)
     return _client
 
 
@@ -90,7 +74,7 @@ async def get_fallback_db() -> AsyncIOMotorDatabase | None:
     if not settings.mongo_uri_fallback:
         return None
     try:
-        client = AsyncIOMotorClient(settings.mongo_uri_fallback, **_mongo_client_kwargs(settings.mongo_uri_fallback))
+        client = AsyncIOMotorClient(settings.mongo_uri_fallback, serverSelectionTimeoutMS=5000)
         await client[settings.mongo_db].command("ping")
         return client[settings.mongo_db]
     except Exception as exc:
