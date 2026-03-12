@@ -48,7 +48,7 @@ services:
       - key: FRONTEND_URL
         value: https://app.poruta.com
       - key: CORS_ORIGINS
-        value: https://app.poruta.com,https://poruta.com,https://amusanga.monitys.com
+        value: https://app.poruta.com,https://poruta.com,https://amusanga.monitys.com,https://auth-services-qtrl.onrender.com
       - key: ADMIN_EMAIL
         value: descartes.tuyishime@poruta.com
       - key: ADMIN_PASSWORD
