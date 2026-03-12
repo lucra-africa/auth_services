@@ -1,6 +1,7 @@
 """MongoDB connection with automatic failover between primary and fallback."""
 
 import logging
+import certifi
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from src.config import settings
@@ -13,7 +14,11 @@ _active_uri: str | None = None
 
 async def _try_connect(uri: str, label: str) -> AsyncIOMotorClient:
     """Attempt to connect and ping a MongoDB URI. Raises on failure."""
-    client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
+    client = AsyncIOMotorClient(
+        uri,
+        serverSelectionTimeoutMS=5000,
+        tlsCAFile=certifi.where(),
+    )
     await client[settings.mongo_db].command("ping")
     logger.info("Connected to %s MongoDB: %s", label, _mask_uri(uri))
     return client
@@ -28,7 +33,11 @@ def _mask_uri(uri: str) -> str:
 def get_client() -> AsyncIOMotorClient:
     global _client
     if _client is None:
-        _client = AsyncIOMotorClient(settings.mongo_uri, serverSelectionTimeoutMS=5000)
+        _client = AsyncIOMotorClient(
+            settings.mongo_uri,
+            serverSelectionTimeoutMS=5000,
+            tlsCAFile=certifi.where(),
+        )
     return _client
 
 
