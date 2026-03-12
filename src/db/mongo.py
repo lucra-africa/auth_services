@@ -1,6 +1,8 @@
-"""MongoDB connection with automatic failover between primary and fallback."""
+"""MongoDB connection — Atlas cluster."""
 
 import logging
+import re
+
 import certifi
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
@@ -9,24 +11,10 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 _client: AsyncIOMotorClient | None = None
-_active_uri: str | None = None
-
-
-async def _try_connect(uri: str, label: str) -> AsyncIOMotorClient:
-    """Attempt to connect and ping a MongoDB URI. Raises on failure."""
-    client = AsyncIOMotorClient(
-        uri,
-        serverSelectionTimeoutMS=5000,
-        tlsCAFile=certifi.where(),
-    )
-    await client[settings.mongo_db].command("ping")
-    logger.info("Connected to %s MongoDB: %s", label, _mask_uri(uri))
-    return client
 
 
 def _mask_uri(uri: str) -> str:
     """Hide credentials in log output."""
-    import re
     return re.sub(r"://[^@]+@", "://***:***@", uri)
 
 
@@ -46,32 +34,18 @@ def get_db() -> AsyncIOMotorDatabase:
 
 
 async def init_database() -> None:
-    """Connect to primary MongoDB; fall back to Atlas if primary is down."""
-    global _client, _active_uri
-
-    # Try primary
-    try:
-        _client = await _try_connect(settings.mongo_uri, "primary")
-        _active_uri = settings.mongo_uri
-    except Exception as exc:
-        logger.warning("Primary MongoDB unavailable: %s", exc)
-
-        if not settings.mongo_uri_fallback:
-            raise RuntimeError("Primary MongoDB is down and no fallback URI configured") from exc
-
-        # Try fallback
-        try:
-            _client = await _try_connect(settings.mongo_uri_fallback, "fallback")
-            _active_uri = settings.mongo_uri_fallback
-        except Exception as fb_exc:
-            raise RuntimeError("Both primary and fallback MongoDB are unreachable") from fb_exc
+    """Connect to MongoDB Atlas and ensure indexes."""
+    global _client
+    _client = get_client()
+    await _client[settings.mongo_db].command("ping")
+    logger.info("Connected to MongoDB: %s", _mask_uri(settings.mongo_uri))
 
     from src.db.indexes import ensure_indexes
     await ensure_indexes(get_db())
 
 
 async def close_database() -> None:
-    global _client, _active_uri
+    global _client
     if _client is not None:
         _client.close()
         _client = None
