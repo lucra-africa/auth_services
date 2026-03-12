@@ -85,6 +85,7 @@ ROLE_LABELS = {
     "government_rra": "RRA Official",
     "government_rsb": "RSB Official",
     "agency_manager": "Agency Manager",
+    "importer": "Importer",
 }
 
 
@@ -126,7 +127,7 @@ async def send_verification_email(to_email: str, token: str) -> None:
 async def send_invitation_email(
     to_email: str, token: str, inviter_name: str, role: str, agency_name: str | None = None
 ) -> None:
-    url = f"{settings.frontend_url}/signup/invite?token={token}"
+    url = f"{settings.frontend_url}/invite?token={token}"
     role_label = ROLE_LABELS.get(role, role)
     html = _build_invitation_email_html(inviter_name, role_label, url, agency_name)
     await _send_email(to_email, "You've been invited to join Poruta", html)
@@ -136,3 +137,34 @@ async def send_password_reset_email(to_email: str, token: str) -> None:
     url = f"{settings.frontend_url}/reset-password?token={token}"
     html = _build_password_reset_email_html(url)
     await _send_email(to_email, "Reset your Poruta password", html)
+
+
+def _build_invitation_accepted_email_html(
+    invitee_name: str, invitee_email: str, role_label: str,
+) -> str:
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h2 style="color: #1a1a2e;">Poruta</h2>
+  <p>Hi,</p>
+  <p>Great news! <strong>{invitee_name}</strong> ({invitee_email}) has accepted your invitation
+     and joined Poruta as a <strong>{role_label}</strong>.</p>
+  <p style="text-align: center; margin: 30px 0;">
+    <a href="{settings.frontend_url}/invitations/manage" style="background-color: #1a1a2e; color: #ffffff; padding: 12px 30px;
+       text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold;">
+      View Invitations
+    </a>
+  </p>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+  <p style="color: #999; font-size: 12px;">&copy; 2026 Poruta. All rights reserved.</p>
+</body>
+</html>"""
+
+
+async def send_invitation_accepted_email(
+    to_email: str, invitee_name: str, invitee_email: str, role: str,
+) -> None:
+    role_label = ROLE_LABELS.get(role, role)
+    html = _build_invitation_accepted_email_html(invitee_name, invitee_email, role_label)
+    await _send_email(to_email, f"{invitee_name} accepted your Poruta invitation", html)
