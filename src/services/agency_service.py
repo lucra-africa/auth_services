@@ -73,7 +73,7 @@ async def list_agencies(
 ) -> dict:
     query: dict = {}
 
-    if user["role"] == "agency_manager":
+    if user["role"] in ("agency_manager", "agent"):
         # If profile not yet completed, show all agencies so user can pick one
         if user.get("profile_completed"):
             query["members.user_id"] = user["_id"]

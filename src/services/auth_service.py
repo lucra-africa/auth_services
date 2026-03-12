@@ -730,9 +730,9 @@ async def complete_profile(
     if user_role == "importer" and not company_name:
         raise ValidationError("company_name is required for importers")
 
-    if user_role == "agency_manager":
+    if user_role in ("agency_manager", "agent"):
         if not agency_id:
-            raise ValidationError("agency_id is required for agency managers")
+            raise ValidationError("agency_id is required for agency managers and agents")
         try:
             agency_oid = ObjectId(agency_id)
         except Exception:
@@ -765,13 +765,14 @@ async def complete_profile(
         }},
     )
 
-    if user_role == "agency_manager" and agency_id:
+    if user_role in ("agency_manager", "agent") and agency_id:
         agency_oid = ObjectId(agency_id)
+        role_in_agency = "manager" if user_role == "agency_manager" else "agent"
         await db.agencies.update_one(
             {"_id": agency_oid},
             {"$push": {"members": {
                 "user_id": user["_id"],
-                "role_in_agency": "manager",
+                "role_in_agency": role_in_agency,
                 "joined_at": now,
             }}},
         )
