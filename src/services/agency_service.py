@@ -74,7 +74,9 @@ async def list_agencies(
     query: dict = {}
 
     if user["role"] == "agency_manager":
-        query["members.user_id"] = user["_id"]
+        # If profile not yet completed, show all agencies so user can pick one
+        if user.get("profile_completed"):
+            query["members.user_id"] = user["_id"]
     elif user["role"] not in ("admin", "government_rra", "government_rsb"):
         raise AuthorizationError("No permission to list agencies")
 
