@@ -455,6 +455,7 @@ async def send_invitation(
     pending = await db.invitation_tokens.find_one({
         "email": email,
         "used_at": None,
+        "revoked_at": None,
         "expires_at": {"$gt": now},
     })
     if pending:
@@ -497,6 +498,8 @@ async def send_invitation(
         "agency_id": resolved_agency_id,
         "expires_at": now + timedelta(hours=24),
         "used_at": None,
+        "revoked_at": None,
+        "revoked_by": None,
         "created_at": now,
     }
     await db.invitation_tokens.insert_one(invitation_doc)
@@ -528,24 +531,45 @@ async def list_invitations(
     page: int = 1,
     page_size: int = 20,
     status: str | None = None,
+    search: str | None = None,
 ) -> dict:
-    """List invitations created by the user."""
+    """List invitations. Admin sees all; others see only their own."""
     now = datetime.now(timezone.utc)
-    query: dict = {"invited_by": user["_id"]}
+
+    # Admin sees system-wide; others only their own
+    query: dict = {} if user["role"] == "admin" else {"invited_by": user["_id"]}
+
+    if search:
+        query["email"] = {"$regex": search, "$options": "i"}
 
     if status == "pending":
         query["used_at"] = None
+        query["revoked_at"] = None
         query["expires_at"] = {"$gt": now}
     elif status == "used":
         query["used_at"] = {"$ne": None}
     elif status == "expired":
         query["used_at"] = None
+        query["revoked_at"] = None
         query["expires_at"] = {"$lte": now}
+    elif status == "revoked":
+        query["revoked_at"] = {"$ne": None}
+        query["used_at"] = None
 
     total = await db.invitation_tokens.count_documents(query)
 
     cursor = db.invitation_tokens.find(query).sort("created_at", -1).skip((page - 1) * page_size).limit(page_size)
     invitations = await cursor.to_list(length=page_size)
+
+    # Pre-fetch inviter info for admin view
+    inviter_ids = list({inv["invited_by"] for inv in invitations})
+    inviters: dict = {}
+    if inviter_ids:
+        cursor_users = db.users.find({"_id": {"$in": inviter_ids}}, {"email": 1, "profile": 1})
+        async for u in cursor_users:
+            profile = u.get("profile") or {}
+            name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip() or u["email"]
+            inviters[u["_id"]] = {"name": name, "email": u["email"]}
 
     items = []
     for inv in invitations:
@@ -555,7 +579,17 @@ async def list_invitations(
             if agency_doc:
                 agency_name = agency_doc["name"]
 
-        inv_status = "used" if inv.get("used_at") else ("expired" if inv["expires_at"] <= now else "pending")
+        # Status priority: used > revoked > expired > pending
+        if inv.get("used_at"):
+            inv_status = "used"
+        elif inv.get("revoked_at"):
+            inv_status = "revoked"
+        elif (inv["expires_at"].replace(tzinfo=timezone.utc) if inv["expires_at"].tzinfo is None else inv["expires_at"]) <= now:
+            inv_status = "expired"
+        else:
+            inv_status = "pending"
+
+        inviter_info = inviters.get(inv["invited_by"], {"name": "Unknown", "email": ""})
 
         items.append({
             "id": str(inv["_id"]),
@@ -566,6 +600,9 @@ async def list_invitations(
             "expires_at": inv["expires_at"].isoformat(),
             "created_at": inv["created_at"].isoformat(),
             "used_at": inv["used_at"].isoformat() if inv.get("used_at") else None,
+            "revoked_at": inv["revoked_at"].isoformat() if inv.get("revoked_at") else None,
+            "invited_by_name": inviter_info["name"],
+            "invited_by_email": inviter_info["email"],
         })
 
     return {
@@ -577,6 +614,190 @@ async def list_invitations(
     }
 
 
+async def get_invitation_stats(db: AsyncIOMotorDatabase, user: dict) -> dict:
+    """Return invitation counts by status."""
+    now = datetime.now(timezone.utc)
+    base_q: dict = {} if user["role"] == "admin" else {"invited_by": user["_id"]}
+
+    total = await db.invitation_tokens.count_documents(base_q)
+    used = await db.invitation_tokens.count_documents({**base_q, "used_at": {"$ne": None}})
+    revoked = await db.invitation_tokens.count_documents({**base_q, "revoked_at": {"$ne": None}, "used_at": None})
+    expired = await db.invitation_tokens.count_documents({
+        **base_q, "used_at": None, "revoked_at": None, "expires_at": {"$lte": now},
+    })
+    pending = await db.invitation_tokens.count_documents({
+        **base_q, "used_at": None, "revoked_at": None, "expires_at": {"$gt": now},
+    })
+
+    return {"total": total, "pending": pending, "used": used, "expired": expired, "revoked": revoked}
+
+
+async def revoke_invitation(
+    db: AsyncIOMotorDatabase,
+    invitation_id: str,
+    revoker: dict,
+    ip_address: str | None = None,
+    user_agent_str: str | None = None,
+) -> dict:
+    """Revoke a pending invitation."""
+    try:
+        inv_oid = ObjectId(invitation_id)
+    except Exception:
+        raise ValidationError("Invalid invitation ID")
+
+    invitation = await db.invitation_tokens.find_one({"_id": inv_oid})
+    if not invitation:
+        raise NotFoundError("Invitation not found")
+
+    # Authorization: admin can revoke any, others only their own
+    if revoker["role"] != "admin" and invitation["invited_by"] != revoker["_id"]:
+        raise AuthorizationError("You can only revoke your own invitations")
+
+    # Can only revoke pending invitations
+    now = datetime.now(timezone.utc)
+    if invitation.get("used_at"):
+        raise ConflictError("Cannot revoke — invitation has already been used")
+    if invitation.get("revoked_at"):
+        raise ConflictError("Invitation has already been revoked")
+    exp = invitation["expires_at"]
+    if (exp.replace(tzinfo=timezone.utc) if exp.tzinfo is None else exp) <= now:
+        raise ConflictError("Cannot revoke — invitation has already expired")
+
+    await db.invitation_tokens.update_one(
+        {"_id": inv_oid},
+        {"$set": {"revoked_at": now, "revoked_by": revoker["_id"]}},
+    )
+
+    await log_action(
+        db, AuthAction.INVITATION_REVOKED,
+        user_id=str(revoker["_id"]), email=revoker["email"],
+        ip_address=ip_address, user_agent=user_agent_str,
+        metadata={
+            "invitation_id": invitation_id,
+            "invited_email": invitation["email"],
+            "invited_role": invitation["role"],
+        },
+    )
+
+    return {"message": f"Invitation to {invitation['email']} has been revoked"}
+
+
+async def resend_invitation(
+    db: AsyncIOMotorDatabase,
+    invitation_id: str,
+    resender: dict,
+    ip_address: str | None = None,
+    user_agent_str: str | None = None,
+) -> dict:
+    """Resend an invitation — invalidates old, creates new with fresh token."""
+    try:
+        inv_oid = ObjectId(invitation_id)
+    except Exception:
+        raise ValidationError("Invalid invitation ID")
+
+    invitation = await db.invitation_tokens.find_one({"_id": inv_oid})
+    if not invitation:
+        raise NotFoundError("Invitation not found")
+
+    # Authorization: admin can resend any, others only their own
+    if resender["role"] != "admin" and invitation["invited_by"] != resender["_id"]:
+        raise AuthorizationError("You can only resend your own invitations")
+
+    if invitation.get("used_at"):
+        raise ConflictError("Cannot resend — invitation has already been used")
+    if invitation.get("revoked_at"):
+        raise ConflictError("Cannot resend — invitation has been revoked")
+
+    # Check invitee hasn't signed up by other means
+    existing_user = await _get_user_by_email(db, invitation["email"])
+    if existing_user:
+        raise ConflictError("A user with this email already exists")
+
+    now = datetime.now(timezone.utc)
+
+    # Invalidate old invitation
+    await db.invitation_tokens.update_one(
+        {"_id": inv_oid},
+        {"$set": {"revoked_at": now, "revoked_by": resender["_id"]}},
+    )
+
+    # Create new invitation doc
+    raw_token = generate_token()
+    new_doc = {
+        "token_hash": hash_token(raw_token),
+        "email": invitation["email"],
+        "role": invitation["role"],
+        "invited_by": resender["_id"],
+        "agency_id": invitation.get("agency_id"),
+        "expires_at": now + timedelta(hours=24),
+        "used_at": None,
+        "revoked_at": None,
+        "revoked_by": None,
+        "created_at": now,
+    }
+    result = await db.invitation_tokens.insert_one(new_doc)
+
+    # Send fresh email
+    resender_name = "Administrator"
+    resender_profile = resender.get("profile")
+    if resender_profile:
+        resender_name = f"{resender_profile.get('first_name', '')} {resender_profile.get('last_name', '')}".strip()
+
+    agency_name = None
+    if invitation.get("agency_id"):
+        agency_doc = await db.agencies.find_one({"_id": invitation["agency_id"]}, {"name": 1})
+        if agency_doc:
+            agency_name = agency_doc["name"]
+
+    await email_service.send_invitation_email(
+        invitation["email"], raw_token, resender_name, invitation["role"], agency_name,
+    )
+
+    await log_action(
+        db, AuthAction.INVITATION_RESENT,
+        user_id=str(resender["_id"]), email=resender["email"],
+        ip_address=ip_address, user_agent=user_agent_str,
+        metadata={
+            "old_invitation_id": invitation_id,
+            "new_invitation_id": str(result.inserted_id),
+            "invited_email": invitation["email"],
+            "invited_role": invitation["role"],
+        },
+    )
+
+    return {
+        "message": f"Invitation resent to {invitation['email']}",
+        "expires_at": new_doc["expires_at"].isoformat(),
+    }
+
+
+async def bulk_send_invitations(
+    db: AsyncIOMotorDatabase,
+    inviter: dict,
+    invitations_list: list[dict],
+    ip_address: str | None = None,
+    user_agent_str: str | None = None,
+) -> dict:
+    """Send multiple invitations. Returns sent/failed breakdown."""
+    sent = []
+    failed = []
+
+    for entry in invitations_list:
+        email = entry["email"]
+        role = entry["role"]
+        agency_id = entry.get("agency_id")
+        try:
+            result = await send_invitation(
+                db, inviter=inviter, email=email, role=role,
+                agency_id=agency_id, ip_address=ip_address, user_agent_str=user_agent_str,
+            )
+            sent.append({"email": email, "role": role, "expires_at": result["expires_at"]})
+        except (AuthorizationError, ConflictError, ValidationError, NotFoundError) as exc:
+            failed.append({"email": email, "reason": str(exc)})
+
+    return {"sent": sent, "failed": failed}
+
+
 async def validate_invitation(db: AsyncIOMotorDatabase, token: str) -> dict:
     token_hash = hash_token(token)
     invitation = await db.invitation_tokens.find_one({"token_hash": token_hash})
@@ -585,6 +806,8 @@ async def validate_invitation(db: AsyncIOMotorDatabase, token: str) -> dict:
         raise ValidationError("Invalid invitation token")
     if invitation.get("used_at"):
         raise ValidationError("This invitation has already been used")
+    if invitation.get("revoked_at"):
+        raise ValidationError("This invitation has been revoked. Please contact your administrator.")
     if invitation["expires_at"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise ValidationError("Invitation has expired. Please contact your administrator.")
 
@@ -632,6 +855,8 @@ async def signup_invited(
         raise ValidationError("Invalid invitation token")
     if invitation.get("used_at"):
         raise ValidationError("This invitation has already been used")
+    if invitation.get("revoked_at"):
+        raise ValidationError("This invitation has been revoked. Please contact your administrator.")
     if invitation["expires_at"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise ValidationError("Invitation has expired. Please contact your administrator.")
 
@@ -704,6 +929,14 @@ async def signup_invited(
         ip_address=ip_address, user_agent=user_agent_str,
         metadata={"role": invitation["role"], "via": "invitation"},
     )
+
+    # Notify inviter that this invitation was accepted
+    inviter = await db.users.find_one({"_id": invitation["invited_by"]})
+    if inviter:
+        invitee_name = f"{first_name} {last_name}".strip()
+        await email_service.send_invitation_accepted_email(
+            inviter["email"], invitee_name, invitation["email"], invitation["role"],
+        )
 
     return _build_token_response(user, access, refresh)
 
