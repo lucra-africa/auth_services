@@ -32,6 +32,16 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Poruta Auth Service")
     await init_database()
 
+    # Validate JWT key configuration
+    from src.core.security import _get_signing_key_and_algorithm, _get_verification_key_and_algorithms
+    try:
+        key, algo = _get_signing_key_and_algorithm()
+        logger.info("JWT signing: algorithm=%s, key_type=%s, key_length=%d", algo, type(key).__name__, len(key) if isinstance(key, (str, bytes)) else 0)
+        vkey, valgos = _get_verification_key_and_algorithms()
+        logger.info("JWT verification: algorithms=%s, key_type=%s", valgos, type(vkey).__name__)
+    except Exception as e:
+        logger.error("JWT key loading failed: %s", e)
+
     # Auto-seed admin
     from src.services.admin_service import seed_admin
 
